@@ -48,6 +48,8 @@ export function toList<T = any>(v: unknown): T[] {
 }
 
 export interface Annotation {
+  /** key of this annotation in the file's table, needed to edit it in place */
+  key?: string;
   kind: 'highlight' | 'note';
   text: string;
   note: string | null;
@@ -73,12 +75,14 @@ export function parseSidecar(src: string): Sidecar {
   const t = parseLuaTable(src);
   const annotations: Annotation[] = [];
 
-  for (const a of toList<any>(t.annotations)) {
+  const entries = t.annotations && typeof t.annotations === 'object' ? Object.entries<any>(t.annotations).sort(([x], [y]) => Number(x) - Number(y)) : [];
+  for (const [key, a] of entries) {
     const text = (a.text ?? '').toString().trim();
     const note = a.note ? String(a.note).trim() : null;
     if (!a.drawer && !note) continue; // plain bookmark
     if (!text && !note) continue;
     annotations.push({
+      key,
       kind: note ? 'note' : 'highlight',
       text,
       note,
@@ -135,23 +139,41 @@ const luaString = (s: string) =>
   s.replace(/\r\n?/g, '\n').replace(/[\\"\x00-\x1f]/g, (c) => LUA_ESCAPES[c] ?? '\\' + c.charCodeAt(0).toString().padStart(3, '0')) +
   '"';
 
-/**
- * Returns the sidecar source with `summary.note` (KOReader's "Resenha" field) set to `note`.
- * Only that value changes: the file is edited in place by position, never re-serialised.
- */
-export function setSummaryNote(src: string, note: string): string {
+/** Sets `key` in the table reached by following `path` from the root. Only that value changes: the file is edited in place by position, never re-serialised. */
+function setField(src: string, path: (string | number)[], key: string, literal: string): string {
   const ast: any = luaparse.parse(src, { luaVersion: '5.3', ranges: true });
   const root = ast.body.find((s: any) => s.type === 'ReturnStatement')?.arguments?.[0];
   if (root?.type !== 'TableConstructorExpression') throw new Error('Arquivo Lua sem "return { ... }"');
-  const keyOf = (f: any): string | undefined =>
-    f.type === 'TableKeyString' ? f.key.name : f.type === 'TableKey' && f.key.type === 'StringLiteral' ? (f.key.value ?? unquote(f.key.raw)) : undefined;
-  const literal = luaString(note);
+
+  /** Same key rules as evalNode: names, ["strings"], [numbers] and positional values. */
+  const find = (table: any, wanted: string | number) => {
+    let auto = 1;
+    for (const f of table.fields) {
+      const k = f.type === 'TableValue' ? auto++ : f.type === 'TableKeyString' ? f.key.name : f.key.type === 'StringLiteral' ? (f.key.value ?? unquote(f.key.raw)) : f.key.value;
+      if (String(k) === String(wanted)) return f;
+    }
+    return undefined;
+  };
   const insertInto = (table: any, text: string) => src.slice(0, table.range[0] + 1) + `\n    ${text}` + src.slice(table.range[0] + 1);
 
-  const summary = root.fields.find((f: any) => keyOf(f) === 'summary');
-  if (!summary) return insertInto(root, `["summary"] = { ["note"] = ${literal} },`);
-  if (summary.value.type !== 'TableConstructorExpression') throw new Error('"summary" não é uma tabela');
-  const field = summary.value.fields.find((f: any) => keyOf(f) === 'note');
+  let table = root;
+  for (const step of path) {
+    const f = find(table, step);
+    if (!f) {
+      if (table === root && step === 'summary') return insertInto(root, `["summary"] = { ["${key}"] = ${literal} },`);
+      throw new Error(`"${step}" não existe neste arquivo`);
+    }
+    if (f.value.type !== 'TableConstructorExpression') throw new Error(`"${step}" não é uma tabela`);
+    table = f.value;
+  }
+  const field = find(table, key);
   if (field) return src.slice(0, field.value.range[0]) + literal + src.slice(field.value.range[1]);
-  return insertInto(summary.value, `["note"] = ${literal},`);
+  return insertInto(table, `["${key}"] = ${literal},`);
 }
+
+/** KOReader's "Resenha" field. */
+export const setSummaryNote = (src: string, note: string) => setField(src, ['summary'], 'note', luaString(note));
+export const setSummaryRating = (src: string, stars: number) => setField(src, ['summary'], 'rating', String(stars));
+export const setSummaryStatus = (src: string, status: 'reading' | 'complete' | 'abandoned') => setField(src, ['summary'], 'status', luaString(status));
+/** The note attached to one highlight; `key` is the annotation's key in the file (see Annotation.key). */
+export const setAnnotationNote = (src: string, key: string, note: string) => setField(src, ['annotations', key], 'note', luaString(note));

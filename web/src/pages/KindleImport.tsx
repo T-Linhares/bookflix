@@ -10,11 +10,12 @@ interface Summary {
   matched: number;
   unmatched: number;
   highlights: number;
-  reviewsSent: number;
+  pushed: { reviews: number; ratings: number; statuses: number; notes: number };
   statsBooks: number;
   readingDays: number;
   errors: string[];
 }
+const sent = (p: Summary['pushed']) => p.reviews + p.ratings + p.statuses + p.notes;
 interface Unmatched {
   id: number;
   title: string;
@@ -122,7 +123,7 @@ export default function KindleImport() {
       setSummary(s);
       unmatched.reload();
       detected.reload();
-      toast(`Sincronizado: ${s.matched} livros, ${s.highlights} destaques${s.reviewsSent ? `, ${s.reviewsSent} resenha${s.reviewsSent > 1 ? 's' : ''} enviada${s.reviewsSent > 1 ? 's' : ''} ao Kindle` : ''}${s.errors.length ? ` (${s.errors.length} aviso${s.errors.length > 1 ? 's' : ''})` : ''}`, s.matched || !s.errors.length ? 'ok' : 'err');
+      toast(`Sincronizado: ${s.matched} livros, ${s.highlights} destaques${sent(s.pushed) ? `, ${sent(s.pushed)} alteraç${sent(s.pushed) > 1 ? 'ões' : 'ão'} enviada${sent(s.pushed) > 1 ? 's' : ''} ao Kindle` : ''}${s.errors.length ? ` (${s.errors.length} aviso${s.errors.length > 1 ? 's' : ''})` : ''}`, s.matched || !s.errors.length ? 'ok' : 'err');
     } catch (e: any) {
       toast(e.message, 'err');
     } finally {
@@ -166,7 +167,7 @@ export default function KindleImport() {
             {[
               ['Livros pareados', summary.matched],
               ['Destaques/notas', summary.highlights],
-              ['Resenhas enviadas', summary.reviewsSent],
+              ['Enviado ao Kindle', sent(summary.pushed)],
               ['Com estatísticas', summary.statsBooks],
               ['Dias de leitura', summary.readingDays],
             ].map(([l, v]) => (

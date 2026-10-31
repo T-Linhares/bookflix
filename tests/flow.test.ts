@@ -165,7 +165,7 @@ describe('Kindle import', () => {
     await app.inject({ method: 'PATCH', url: `/api/books/${bookId}`, payload: { rating: 4, review: 'Revisei minha opinião' } });
 
     const imp = json(await app.inject({ method: 'POST', url: '/api/kindle/import', payload: { path: kindleDir } }));
-    expect(imp.reviewsSent).toBe(1);
+    expect(imp.pushed).toEqual({ reviews: 1, ratings: 1, statuses: 0, notes: 1 });
     b = json(await app.inject({ method: 'GET', url: `/api/books/${bookId}` }));
     expect(b.highlights).toHaveLength(1);
     expect(b.highlights[0].note).toBe('Nota editada por mim');
@@ -174,16 +174,37 @@ describe('Kindle import', () => {
     expect(b.progress).toBeCloseTo(0.42);
   });
 
-  it('writes the review made in Bookflix into the Kindle sidecar (Resenha field) and leaves the rest alone', async () => {
-    const lua = path.join(`${path.join(kindleDir, 'documents', path.basename(committedPath))}.sdr`, 'metadata.epub.lua');
-    const { parseSidecar } = await import('../server/kindle/lua.ts');
-    const sc = parseSidecar(fs.readFileSync(lua, 'utf8'));
+  const sidecarPath = () => path.join(`${path.join(kindleDir, 'documents', path.basename(committedPath))}.sdr`, 'metadata.epub.lua');
+  const readSidecar = async () => (await import('../server/kindle/lua.ts')).parseSidecar(fs.readFileSync(sidecarPath(), 'utf8'));
+  const importKindle = async () => json(await app.inject({ method: 'POST', url: '/api/kindle/import', payload: { path: kindleDir } }));
+
+  it('writes review, stars and the corrected note into the Kindle sidecar and leaves the rest alone', async () => {
+    const sc = await readSidecar();
     expect(sc.review).toBe('Revisei minha opinião');
-    expect(sc.rating).toBe(5); // only the review is pushed
-    expect(sc.annotations).toHaveLength(2);
+    expect(sc.rating).toBe(4);
+    expect(sc.annotations).toHaveLength(2); // the highlight deleted in Bookflix is NOT removed from the Kindle
+    expect(sc.annotations[0]).toMatchObject({ kind: 'highlight', text: 'Uma frase "marcada"\ncom quebra', page: '12' });
+    expect(sc.annotations[1]).toMatchObject({ kind: 'note', note: 'Nota editada por mim', text: 'Outro trecho' });
     expect(sc.percent).toBeCloseTo(0.42);
-    const again = json(await app.inject({ method: 'POST', url: '/api/kindle/import', payload: { path: kindleDir } }));
-    expect(again.reviewsSent).toBe(0); // already there: nothing is rewritten
+    expect(sc.status).toBe('reading'); // status was never edited in Bookflix: left as it was
+    expect((await importKindle()).pushed).toEqual({ reviews: 0, ratings: 0, statuses: 0, notes: 0 }); // already there: nothing rewritten
+  });
+
+  it('sends a status changed in Bookflix (Em pausa = abandoned) and keeps it after reimport', async () => {
+    await app.inject({ method: 'PATCH', url: `/api/books/${bookId}`, payload: { status: 'abandoned' } });
+    expect((await importKindle()).pushed).toMatchObject({ statuses: 1 });
+    expect((await readSidecar()).status).toBe('abandoned');
+    expect(json(await app.inject({ method: 'GET', url: `/api/books/${bookId}` })).status).toBe('abandoned');
+    await app.inject({ method: 'PATCH', url: `/api/books/${bookId}`, payload: { status: 'reading' } });
+    await importKindle();
+    expect((await readSidecar()).status).toBe('reading');
+  });
+
+  it('does not send "unread", which KOReader has no state for', async () => {
+    await app.inject({ method: 'PATCH', url: `/api/books/${bookId}`, payload: { status: 'unread' } });
+    expect((await importKindle()).pushed.statuses).toBe(0);
+    expect((await readSidecar()).status).toBe('reading');
+    await app.inject({ method: 'PATCH', url: `/api/books/${bookId}`, payload: { status: 'reading' } });
   });
 
   it('puts books it cannot match into the unmatched queue', async () => {

@@ -13,7 +13,7 @@ import { norm, now, partialMd5, sha1 } from '../util.ts';
 export function highlightUid(book: { id: number; hash: string | null }, datetime: string | null | undefined, text: string | null | undefined): string {
   return sha1(`${book.hash || book.id}|${datetime}|${text}`);
 }
-import { Sidecar, parseSidecar, setSummaryNote } from './lua.ts';
+import { Sidecar, parseSidecar, setAnnotationNote, setSummaryNote, setSummaryRating, setSummaryStatus } from './lua.ts';
 
 export interface ImportSummary {
   root: string;
@@ -21,8 +21,8 @@ export interface ImportSummary {
   matched: number;
   unmatched: number;
   highlights: number;
-  /** reviews written in Bookflix that were copied into the Kindle's "Resenha" field */
-  reviewsSent: number;
+  /** what was edited in Bookflix and written into the Kindle's files */
+  pushed: Pushed;
   statsBooks: number;
   readingDays: number;
   errors: string[];
@@ -87,25 +87,79 @@ const toEpoch = (s?: string | null) => {
   return Number.isNaN(t) ? null : Math.floor(t / 1000);
 };
 
+export interface Pushed {
+  reviews: number;
+  ratings: number;
+  statuses: number;
+  notes: number;
+}
+const noPush = (): Pushed => ({ reviews: 0, ratings: 0, statuses: 0, notes: 0 });
+
+/** KOReader has no "unread": a book that was never opened simply has no status. */
+const KO_STATUS: Partial<Record<BookRow['status'], 'reading' | 'complete' | 'abandoned'>> = { reading: 'reading', read: 'complete', abandoned: 'abandoned' };
+
+const lf = (s: string | null | undefined) => (s ?? '').replace(/\r\n?/g, '\n').trim();
+
 /**
- * A review typed in Bookflix goes into the sidecar's summary.note, which KOReader shows as "Resenha".
- * The Kindle's own text is kept when Bookflix has not edited the review (applySidecar imports it instead).
+ * What was edited in Bookflix goes into the book's sidecar on the Kindle: review ("Resenha"), stars, status
+ * and the text of highlight notes. What Bookflix did not edit is left alone (applySidecar imports it instead).
+ * Highlights are never added or removed on the Kindle, and the book's text is never touched.
+ * The new file is parsed again and checked before it replaces the old one.
  */
-async function pushReview(book: BookRow, sc: Sidecar, luaPath: string): Promise<boolean> {
-  const review = book.review?.replace(/\r\n?/g, '\n').trim();
-  if (!review || review === sc.review) return false;
-  if (sc.review && !book.edited_fields.includes('review')) return false;
-  const out = setSummaryNote(await fs.readFile(luaPath, 'utf8'), review);
-  if (parseSidecar(out).review !== review) throw new Error('não foi possível gravar a resenha com segurança; o arquivo do Kindle não foi alterado');
+async function pushToSidecar(book: BookRow, sc: Sidecar, luaPath: string): Promise<Pushed> {
+  const edited = new Set(book.edited_fields);
+  // Bookflix wins when the user edited the field; a Kindle value is also filled in when it has none
+  const wins = (field: string, onKindle: unknown) => edited.has(field) || !onKindle;
+  const original = await fs.readFile(luaPath, 'utf8');
+  let src = original;
+  const pushed = noPush();
+  const expected: { review?: string; rating?: number; status?: string; notes: Map<string, string> } = { notes: new Map() };
+
+  const review = lf(book.review);
+  if (review && review !== lf(sc.review) && wins('review', sc.review)) {
+    src = setSummaryNote(src, review);
+    expected.review = review;
+    pushed.reviews++;
+  }
+  if (book.rating && book.rating !== sc.rating && wins('rating', sc.rating)) {
+    src = setSummaryRating(src, book.rating);
+    expected.rating = book.rating;
+    pushed.ratings++;
+  }
+  const status = KO_STATUS[book.status];
+  if (status && status !== sc.status && edited.has('status')) {
+    src = setSummaryStatus(src, status);
+    expected.status = status;
+    pushed.statuses++;
+  }
+
+  const mine = new Map((db.prepare('select uid, note from highlights where book_id = ? and edited = 1 and deleted = 0').all(book.id) as { uid: string; note: string | null }[]).map((r) => [r.uid, lf(r.note)]));
+  for (const a of sc.annotations) {
+    const note = mine.get(highlightUid(book, a.datetime, a.text));
+    if (!a.key || !note || note === lf(a.note)) continue;
+    src = setAnnotationNote(src, a.key, note);
+    expected.notes.set(a.key, note);
+    pushed.notes++;
+  }
+
+  if (src === original) return noPush();
+  const check = parseSidecar(src);
+  const ok =
+    (expected.review === undefined || check.review === expected.review) &&
+    (expected.rating === undefined || check.rating === expected.rating) &&
+    (expected.status === undefined || check.status === expected.status) &&
+    [...expected.notes].every(([k, n]) => check.annotations.find((x) => x.key === k)?.note === n) &&
+    check.annotations.length >= sc.annotations.length;
+  if (!ok) throw new Error('não foi possível gravar com segurança; o arquivo do Kindle não foi alterado');
   const tmp = `${luaPath}.bookflix-tmp`;
   try {
-    await fs.writeFile(tmp, out);
+    await fs.writeFile(tmp, src);
     await fs.rename(tmp, luaPath);
   } catch (e) {
     await fs.rm(tmp, { force: true });
     throw e;
   }
-  return true;
+  return pushed;
 }
 
 function applySidecar(book: BookRow, sc: Sidecar): number {
@@ -200,7 +254,7 @@ function importStats(statsPath: string, summary: ImportSummary) {
 export async function importFromKindle(root: string): Promise<ImportSummary> {
   if (!root || !fsSync.existsSync(root)) throw new Error('Pasta do Kindle não encontrada.');
   setSetting('lastKindleRoot', root);
-  const summary: ImportSummary = { root, sidecars: 0, matched: 0, unmatched: 0, highlights: 0, reviewsSent: 0, statsBooks: 0, readingDays: 0, errors: [] };
+  const summary: ImportSummary = { root, sidecars: 0, matched: 0, unmatched: 0, highlights: 0, pushed: noPush(), statsBooks: 0, readingDays: 0, errors: [] };
 
   for (const sdr of await findSdrs(root)) {
     try {
@@ -222,7 +276,8 @@ export async function importFromKindle(root: string): Promise<ImportSummary> {
       }
       summary.highlights += tx(() => applySidecar(book, sc));
       summary.matched++;
-      if (await pushReview(book, sc, path.join(sdr, lua))) summary.reviewsSent++;
+      const p = await pushToSidecar(book, sc, path.join(sdr, lua));
+      for (const k of Object.keys(p) as (keyof Pushed)[]) summary.pushed[k] += p[k];
     } catch (e) {
       summary.errors.push(`${path.basename(sdr)}: ${(e as Error).message}`);
     }
