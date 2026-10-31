@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 
 import { APP_VERSION } from '../server/version.ts';
-import { checkForUpdate, isNewer, resetUpdateCache } from '../server/versionCheck.ts';
+import { checkForUpdate, checkUpdateStatus, isNewer, resetUpdateCache } from '../server/versionCheck.ts';
 
 let calls: { url: string; init: RequestInit }[];
 const release = (over: object = {}) => ({ tag_name: 'v0.3.0', html_url: 'https://github.com/o/r/releases/tag/v0.3.0', draft: false, prerelease: false, ...over });
@@ -95,6 +95,71 @@ describe('version check (T19)', () => {
 
   it('APP_VERSION matches package.json', () => {
     expect(APP_VERSION).toBe(JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
+  });
+});
+
+describe('manual check ("Procurar atualização")', () => {
+  const status = (over: object = {}) => checkUpdateStatus({ current: '0.2.0', repo: 'o/r', ...over });
+
+  it('says whether there is a newer version, none, or why it could not tell', async () => {
+    stub(ok(release()));
+    expect(await status()).toEqual({ status: 'newer', update: { version: '0.3.0', url: 'https://github.com/o/r/releases/tag/v0.3.0' } });
+    resetUpdateCache();
+    stub(ok(release({ tag_name: 'v0.2.0' })));
+    expect(await status()).toEqual({ status: 'current' });
+    resetUpdateCache();
+    // a private repository (or one without a published release) answers 404 to an anonymous request
+    stub(() => new Response('{}', { status: 404 }));
+    expect(await status()).toEqual({ status: 'unavailable', reason: 'not-found' });
+    stub(() => new Response('{}', { status: 403 }));
+    expect(await status()).toEqual({ status: 'unavailable', reason: 'rate-limited' });
+    stub(() => new Response('oops', { status: 500 }));
+    expect(await status()).toEqual({ status: 'unavailable', reason: 'error' });
+    stub(() => {
+      throw new TypeError('fetch failed');
+    });
+    expect(await status()).toEqual({ status: 'unavailable', reason: 'offline' });
+    expect(await status({ repo: 'SEU-USUARIO/bookflix' })).toEqual({ status: 'unavailable', reason: 'no-repo' });
+  });
+
+  it('force skips the 6 hour memory; without it the answer is remembered', async () => {
+    stub(ok(release()));
+    await status();
+    await status();
+    expect(calls).toHaveLength(1);
+    await status({ force: true });
+    expect(calls).toHaveLength(2);
+  });
+
+  it('a failed check is not remembered: the next one tries again (offline when the app opened must not hide updates for hours)', async () => {
+    stub(() => {
+      throw new TypeError('fetch failed');
+    });
+    expect((await status()).status).toBe('unavailable');
+    stub(ok(release()));
+    expect((await status()).status).toBe('newer');
+    expect(calls).toHaveLength(2);
+  });
+});
+
+describe('POST /api/update-check', () => {
+  it('checks right now even when the automatic check is turned off, and tells the result', async () => {
+    process.env.BOOKFLIX_REPO = 'o/r';
+    const { buildApp } = await import('../server/app.ts');
+    const { updateSettings } = await import('../server/settings.ts');
+    const app = await buildApp();
+    updateSettings({ checkUpdates: false });
+    stub(ok(release({ tag_name: 'v99.0.0' })));
+    const res = JSON.parse((await app.inject({ method: 'POST', url: '/api/update-check', payload: {} })).body);
+    expect(res).toMatchObject({ status: 'newer', current: APP_VERSION, update: { version: '99.0.0' } });
+    expect(calls).toHaveLength(1);
+
+    stub(() => new Response('{}', { status: 404 }));
+    const bad = JSON.parse((await app.inject({ method: 'POST', url: '/api/update-check', payload: {} })).body);
+    expect(bad).toMatchObject({ status: 'unavailable', reason: 'not-found', current: APP_VERSION });
+    updateSettings({ checkUpdates: true });
+    await app.close();
+    delete process.env.BOOKFLIX_REPO;
   });
 });
 

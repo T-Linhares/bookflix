@@ -192,6 +192,57 @@ function GetKeyButton({ url, label = 'Obter chave' }: { url: string; label?: str
   );
 }
 
+type UpdateResult =
+  | { status: 'newer'; current: string; update: { version: string; url: string } }
+  | { status: 'current'; current: string }
+  | { status: 'unavailable'; current: string; reason: 'no-repo' | 'not-found' | 'rate-limited' | 'offline' | 'error' };
+
+const WHY_NOT: Record<string, string> = {
+  'no-repo': 'Este app ainda não sabe em qual repositório procurar.',
+  'not-found': 'O GitHub não mostrou nenhuma versão publicada. Se o repositório for privado, o app não consegue enxergá-lo: ele precisa ser público para avisar das novidades.',
+  'rate-limited': 'O GitHub recusou a consulta por excesso de pedidos. Tente de novo daqui a alguns minutos.',
+  offline: 'Sem conexão com o GitHub. Verifique a internet e tente de novo.',
+  error: 'O GitHub respondeu algo inesperado. Tente de novo mais tarde.',
+};
+
+/** Asks GitHub right now (the automatic check only runs when the app opens) and says the result in words. */
+function UpdateCheckButton() {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<UpdateResult | null>(null);
+  const check = async () => {
+    setBusy(true);
+    try {
+      setResult(await api<UpdateResult>('/api/update-check', { body: {} }));
+    } catch (e: any) {
+      toast(e.message, 'err');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const open = (url: string) => (window.bookflix ? void window.bookflix.openExternal(url) : void window.open(url, '_blank', 'noopener,noreferrer'));
+  return (
+    <div>
+      <button type="button" className="btn-ghost" disabled={busy} onClick={check}>
+        {busy ? 'Procurando…' : 'Procurar atualização'}
+      </button>
+      {result && (
+        <p className={`mt-2 text-sm ${result.status === 'unavailable' ? 'text-accent2' : result.status === 'newer' ? 'text-warn' : 'text-ok'}`} role="status">
+          {result.status === 'newer' && (
+            <>
+              Há uma versão nova: {result.update.version} (você usa a {result.current}).{' '}
+              <button type="button" className="font-semibold underline" onClick={() => open(result.update.url)}>
+                Ver e baixar
+              </button>
+            </>
+          )}
+          {result.status === 'current' && `Você já está na versão mais recente (${result.current}).`}
+          {result.status === 'unavailable' && WHY_NOT[result.reason]}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function AiKeyField({ label, provider, value, onChange, hint, getUrl }: { label: string; provider: 'gemini' | 'anthropic' | 'openai'; value: string; onChange: (v: string) => void; hint: ReactNode; getUrl: string }) {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -350,6 +401,7 @@ export default function SettingsPage() {
             <span className="block text-xs text-muted">Ao abrir, o app faz uma consulta anônima à página pública de versões no GitHub (nenhum dado seu é enviado). Nada é baixado nem instalado sozinho.</span>
           </span>
         </label>
+        <UpdateCheckButton />
       </section>
 
       <section className="card space-y-4">

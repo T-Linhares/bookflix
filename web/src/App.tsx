@@ -90,7 +90,11 @@ function UpdateNotice() {
   const [update, setUpdate] = useState<{ version: string; url: string } | null>(null);
   const [hidden, setHidden] = useState(false);
   useEffect(() => {
-    api('/api/update-check').then((r) => setUpdate(r.update)).catch(() => {});
+    const check = () => api('/api/update-check').then((r) => setUpdate(r.update)).catch(() => {});
+    check();
+    // the desktop app can stay open for days: ask again now and then (the server only goes to GitHub every 6 hours)
+    const timer = setInterval(check, 6 * 60 * 60 * 1000);
+    return () => clearInterval(timer);
   }, []);
   if (!update || hidden) return null;
   const open = () => (window.bookflix ? void window.bookflix.openExternal(update.url) : void window.open(update.url, '_blank', 'noopener,noreferrer'));
