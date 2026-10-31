@@ -10,6 +10,7 @@ interface Summary {
   matched: number;
   unmatched: number;
   highlights: number;
+  reviewsSent: number;
   statsBooks: number;
   readingDays: number;
   errors: string[];
@@ -121,7 +122,7 @@ export default function KindleImport() {
       setSummary(s);
       unmatched.reload();
       detected.reload();
-      toast(`Sincronizado: ${s.matched} livros, ${s.highlights} destaques${s.errors.length ? ` (${s.errors.length} aviso${s.errors.length > 1 ? 's' : ''})` : ''}`, s.matched || !s.errors.length ? 'ok' : 'err');
+      toast(`Sincronizado: ${s.matched} livros, ${s.highlights} destaques${s.reviewsSent ? `, ${s.reviewsSent} resenha${s.reviewsSent > 1 ? 's' : ''} enviada${s.reviewsSent > 1 ? 's' : ''} ao Kindle` : ''}${s.errors.length ? ` (${s.errors.length} aviso${s.errors.length > 1 ? 's' : ''})` : ''}`, s.matched || !s.errors.length ? 'ok' : 'err');
     } catch (e: any) {
       toast(e.message, 'err');
     } finally {
@@ -161,10 +162,11 @@ export default function KindleImport() {
           {!detected.data?.root && <span className="text-sm text-muted">Conecte o Kindle por USB.</span>}
         </div>
         {summary && (
-          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
             {[
               ['Livros pareados', summary.matched],
               ['Destaques/notas', summary.highlights],
+              ['Resenhas enviadas', summary.reviewsSent],
               ['Com estatísticas', summary.statsBooks],
               ['Dias de leitura', summary.readingDays],
             ].map(([l, v]) => (

@@ -13,7 +13,7 @@ import { norm, now, partialMd5, sha1 } from '../util.ts';
 export function highlightUid(book: { id: number; hash: string | null }, datetime: string | null | undefined, text: string | null | undefined): string {
   return sha1(`${book.hash || book.id}|${datetime}|${text}`);
 }
-import { Sidecar, parseSidecar } from './lua.ts';
+import { Sidecar, parseSidecar, setSummaryNote } from './lua.ts';
 
 export interface ImportSummary {
   root: string;
@@ -21,6 +21,8 @@ export interface ImportSummary {
   matched: number;
   unmatched: number;
   highlights: number;
+  /** reviews written in Bookflix that were copied into the Kindle's "Resenha" field */
+  reviewsSent: number;
   statsBooks: number;
   readingDays: number;
   errors: string[];
@@ -84,6 +86,27 @@ const toEpoch = (s?: string | null) => {
   const t = Date.parse(s.replace(' ', 'T'));
   return Number.isNaN(t) ? null : Math.floor(t / 1000);
 };
+
+/**
+ * A review typed in Bookflix goes into the sidecar's summary.note, which KOReader shows as "Resenha".
+ * The Kindle's own text is kept when Bookflix has not edited the review (applySidecar imports it instead).
+ */
+async function pushReview(book: BookRow, sc: Sidecar, luaPath: string): Promise<boolean> {
+  const review = book.review?.replace(/\r\n?/g, '\n').trim();
+  if (!review || review === sc.review) return false;
+  if (sc.review && !book.edited_fields.includes('review')) return false;
+  const out = setSummaryNote(await fs.readFile(luaPath, 'utf8'), review);
+  if (parseSidecar(out).review !== review) throw new Error('não foi possível gravar a resenha com segurança; o arquivo do Kindle não foi alterado');
+  const tmp = `${luaPath}.bookflix-tmp`;
+  try {
+    await fs.writeFile(tmp, out);
+    await fs.rename(tmp, luaPath);
+  } catch (e) {
+    await fs.rm(tmp, { force: true });
+    throw e;
+  }
+  return true;
+}
 
 function applySidecar(book: BookRow, sc: Sidecar): number {
   const edited = new Set(book.edited_fields);
@@ -177,7 +200,7 @@ function importStats(statsPath: string, summary: ImportSummary) {
 export async function importFromKindle(root: string): Promise<ImportSummary> {
   if (!root || !fsSync.existsSync(root)) throw new Error('Pasta do Kindle não encontrada.');
   setSetting('lastKindleRoot', root);
-  const summary: ImportSummary = { root, sidecars: 0, matched: 0, unmatched: 0, highlights: 0, statsBooks: 0, readingDays: 0, errors: [] };
+  const summary: ImportSummary = { root, sidecars: 0, matched: 0, unmatched: 0, highlights: 0, reviewsSent: 0, statsBooks: 0, readingDays: 0, errors: [] };
 
   for (const sdr of await findSdrs(root)) {
     try {
@@ -199,6 +222,7 @@ export async function importFromKindle(root: string): Promise<ImportSummary> {
       }
       summary.highlights += tx(() => applySidecar(book, sc));
       summary.matched++;
+      if (await pushReview(book, sc, path.join(sdr, lua))) summary.reviewsSent++;
     } catch (e) {
       summary.errors.push(`${path.basename(sdr)}: ${(e as Error).message}`);
     }

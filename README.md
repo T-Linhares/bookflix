@@ -29,7 +29,7 @@ Baixe o instalador da [página de versões](https://github.com/T-Linhares/bookfl
 1. **Ajustes → Pasta da biblioteca:** escolha qualquer pasta. Para ter os livros em outros aparelhos, use uma pasta do **Dropbox** ou do **Google Drive para computador** (os atalhos aparecem quando o aplicativo do serviço está instalado).
 2. **Adicionar:** arraste um livro. O app preenche série, ordem, autor, editora, ano da edição, tags e descrição; mostra o nome final e a pasta; você confirma e ele salva na biblioteca.
 3. **Kindle → Enviar para o Kindle** (ou o botão na página do livro): com o Kindle ligado por USB, o app copia os livros prontos para `documents/Livros` e marca cada um como "No Kindle". Nunca sobrescreve um arquivo de mesmo nome e tamanho diferente.
-4. **Kindle → Importar:** com o Kindle ligado por USB, importe destaques, notas, progresso, nota/resenha e tempo de leitura (KOReader).
+4. **Kindle → Importar:** com o Kindle ligado por USB, importe destaques, notas, progresso, nota/resenha e tempo de leitura (KOReader). A resenha escrita no Bookflix também é gravada no campo "Resenha" do KOReader (só nos livros que já foram abertos no Kindle, que têm arquivo de dados).
 
 ## Sincronizar entre aparelhos (experimental)
 

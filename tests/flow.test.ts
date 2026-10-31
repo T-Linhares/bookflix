@@ -164,13 +164,26 @@ describe('Kindle import', () => {
     await app.inject({ method: 'DELETE', url: `/api/highlights/${gone.id}` });
     await app.inject({ method: 'PATCH', url: `/api/books/${bookId}`, payload: { rating: 4, review: 'Revisei minha opinião' } });
 
-    await app.inject({ method: 'POST', url: '/api/kindle/import', payload: { path: kindleDir } });
+    const imp = json(await app.inject({ method: 'POST', url: '/api/kindle/import', payload: { path: kindleDir } }));
+    expect(imp.reviewsSent).toBe(1);
     b = json(await app.inject({ method: 'GET', url: `/api/books/${bookId}` }));
     expect(b.highlights).toHaveLength(1);
     expect(b.highlights[0].note).toBe('Nota editada por mim');
     expect(b.rating).toBe(4);
     expect(b.review).toBe('Revisei minha opinião');
     expect(b.progress).toBeCloseTo(0.42);
+  });
+
+  it('writes the review made in Bookflix into the Kindle sidecar (Resenha field) and leaves the rest alone', async () => {
+    const lua = path.join(`${path.join(kindleDir, 'documents', path.basename(committedPath))}.sdr`, 'metadata.epub.lua');
+    const { parseSidecar } = await import('../server/kindle/lua.ts');
+    const sc = parseSidecar(fs.readFileSync(lua, 'utf8'));
+    expect(sc.review).toBe('Revisei minha opinião');
+    expect(sc.rating).toBe(5); // only the review is pushed
+    expect(sc.annotations).toHaveLength(2);
+    expect(sc.percent).toBeCloseTo(0.42);
+    const again = json(await app.inject({ method: 'POST', url: '/api/kindle/import', payload: { path: kindleDir } }));
+    expect(again.reviewsSent).toBe(0); // already there: nothing is rewritten
   });
 
   it('puts books it cannot match into the unmatched queue', async () => {

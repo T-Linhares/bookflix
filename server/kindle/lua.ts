@@ -126,3 +126,32 @@ export function parseSidecar(src: string): Sidecar {
     annotations,
   };
 }
+
+const LUA_ESCAPES: Record<string, string> = { '\\': '\\\\', '"': '\\"', '\n': '\\n' };
+
+/** A Lua string literal; control characters other than newline become decimal escapes (\ddd). */
+const luaString = (s: string) =>
+  '"' +
+  s.replace(/\r\n?/g, '\n').replace(/[\\"\x00-\x1f]/g, (c) => LUA_ESCAPES[c] ?? '\\' + c.charCodeAt(0).toString().padStart(3, '0')) +
+  '"';
+
+/**
+ * Returns the sidecar source with `summary.note` (KOReader's "Resenha" field) set to `note`.
+ * Only that value changes: the file is edited in place by position, never re-serialised.
+ */
+export function setSummaryNote(src: string, note: string): string {
+  const ast: any = luaparse.parse(src, { luaVersion: '5.3', ranges: true });
+  const root = ast.body.find((s: any) => s.type === 'ReturnStatement')?.arguments?.[0];
+  if (root?.type !== 'TableConstructorExpression') throw new Error('Arquivo Lua sem "return { ... }"');
+  const keyOf = (f: any): string | undefined =>
+    f.type === 'TableKeyString' ? f.key.name : f.type === 'TableKey' && f.key.type === 'StringLiteral' ? (f.key.value ?? unquote(f.key.raw)) : undefined;
+  const literal = luaString(note);
+  const insertInto = (table: any, text: string) => src.slice(0, table.range[0] + 1) + `\n    ${text}` + src.slice(table.range[0] + 1);
+
+  const summary = root.fields.find((f: any) => keyOf(f) === 'summary');
+  if (!summary) return insertInto(root, `["summary"] = { ["note"] = ${literal} },`);
+  if (summary.value.type !== 'TableConstructorExpression') throw new Error('"summary" não é uma tabela');
+  const field = summary.value.fields.find((f: any) => keyOf(f) === 'note');
+  if (field) return src.slice(0, field.value.range[0]) + literal + src.slice(field.value.range[1]);
+  return insertInto(summary.value, `["note"] = ${literal},`);
+}
