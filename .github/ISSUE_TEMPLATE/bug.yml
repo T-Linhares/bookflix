@@ -1,0 +1,25 @@
+name: Relatar um problema
+description: Algo não funcionou como esperado
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por avisar. Não inclua senhas, chaves de API nem dados pessoais.
+        O botão de bug dentro do app abre esta página já preenchida.
+  - type: textarea
+    id: what
+    attributes:
+      label: O que aconteceu?
+      description: Descreva o problema e, se souber, os passos para repeti-lo.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: O que você esperava?
+  - type: input
+    id: env
+    attributes:
+      label: Versão do app e sistema operacional
+      placeholder: "0.2.0, Windows 11"

@@ -1,0 +1,61 @@
+{
+  "name": "bookflix",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Biblioteca pessoal de livros em formato Netflix, com envio ao Kindle (KOReader)",
+  "author": "Thiago",
+  "license": "MIT",
+  "homepage": "https://github.com/T-Linhares/bookflix",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:web": "vite --config web/vite.config.ts",
+    "build": "vite build --config web/vite.config.ts",
+    "start": "tsx server/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "demo": "tsx scripts/seed-demo.ts demo",
+    "electron:build": "node scripts/build-electron.mjs",
+    "electron:dev": "npm run build && npm run electron:build && electron .",
+    "electron:smoke": "node scripts/smoke.mjs",
+    "dist": "npm run build && npm run electron:build && electron-builder",
+    "dist:win": "npm run build && npm run electron:build && electron-builder --win",
+    "dist:linux": "npm run build && npm run electron:build && electron-builder --linux"
+  },
+  "dependencies": {
+    "@fastify/multipart": "^10.1.6",
+    "@fastify/static": "^10.1.8",
+    "chokidar": "^6.0.0",
+    "fast-xml-parser": "^5.11.2",
+    "fastify": "^5.12.7",
+    "jszip": "^3.10.2",
+    "luaparse": "^0.3.1",
+    "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/luaparse": "^0.2.13",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router-dom": "^7.18.5",
+    "recharts": "^3.10.1",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

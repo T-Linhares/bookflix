@@ -1,0 +1,65 @@
+name: Release
+
+# Pushing a tag like v0.2.0 builds the installers on their own operating systems and attaches them to a GitHub Release.
+# Pull requests and pushes to main only run the checks.
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            dist: dist:win
+          - os: ubuntu-latest
+            dist: dist:linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run ${{ matrix.dist }}
+      # starts the packaged app with a throw-away data folder and checks SQLite/FTS5, the API token and the web app
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/smoke.mjs release/win-unpacked/Bookflix.exe
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/smoke.mjs release/linux-unpacked/bookflix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" installers/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes

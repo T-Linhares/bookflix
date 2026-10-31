@@ -1,0 +1,44 @@
+appId: app.bookflix.desktop
+productName: Bookflix
+copyright: MIT License
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist-electron/**
+  - package.json
+  # trim what no code path loads (pdf-lib is used through its CommonJS build)
+  - "!**/node_modules/**/*.map"
+  - "!**/node_modules/**/{CHANGELOG,CHANGELOG.md,README,README.md,docs,test,tests,__tests__}"
+  - "!**/node_modules/pdf-lib/{es,src}"
+# the built web app lives next to the code archive (main.ts points BOOKFLIX_WEB_DIST at it)
+extraResources:
+  - from: web/dist
+    to: web-dist
+asar: true
+npmRebuild: false
+# no auto-update on purpose: the app only shows a notice when a newer release exists
+publish: null
+artifactName: Bookflix-${version}-${os}-${arch}.${ext}
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # reinstalling or uninstalling must never delete the user's library data
+  deleteAppDataOnUninstall: false
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Office
+  executableName: bookflix
+  icon: build/icon.png
+  maintainer: Thiago <thiagolinharespinto@gmail.com>
+  synopsis: Biblioteca pessoal de livros com envio ao Kindle

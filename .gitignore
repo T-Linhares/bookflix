@@ -1,0 +1,8 @@
+node_modules
+data
+dist
+dist-electron
+release
+.env
+demo
+.claude

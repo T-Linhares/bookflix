@@ -1,0 +1,69 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-bg: #0b0b10;
+  --color-surface: #15151d;
+  --color-surface2: #1f1f2b;
+  --color-line: #2c2c3a;
+  --color-ink: #f3f3f7;
+  --color-muted: #9b9bb0;
+  --color-accent: #e50914;
+  --color-accent2: #ff3b47;
+  --color-ok: #3ecf8e;
+  --color-warn: #f5b84b;
+  --font-sans: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-accent);
+  color: white;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 bg-accent text-white hover:bg-accent2;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 border border-line bg-surface2/60 text-ink hover:bg-surface2;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 border border-accent/50 text-accent2 hover:bg-accent/10;
+  }
+  .input {
+    @apply w-full rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-accent;
+  }
+  .label {
+    @apply mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-line bg-surface2 px-2.5 py-0.5 text-xs text-ink;
+  }
+  .card {
+    @apply rounded-xl border border-line bg-surface p-5;
+  }
+}
