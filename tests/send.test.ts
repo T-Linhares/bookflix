@@ -46,7 +46,9 @@ describe('send to Kindle', () => {
     const again = addBook('Autor - Dois.epub', 'two');
     const r = await send.sendToKindle([again], kindle);
     expect(r.dest.endsWith('livros')).toBe(true);
-    expect(fs.existsSync(path.join(kindle, 'documents', 'Livros', 'Autor - Dois.epub'))).toBe(true);
+    // check the folder the app reported: only Windows/macOS treat "Livros" and "livros" as the same path
+    expect(fs.existsSync(path.join(r.dest, 'Autor - Dois.epub'))).toBe(true);
+    expect(fs.readdirSync(path.join(kindle, 'documents')).filter((d) => d.toLowerCase() === 'livros')).toEqual(['livros']); // no second folder was created
     const repeat = await send.sendToKindle([again], kindle);
     expect(repeat.copied).toEqual([]);
     expect(repeat.already).toEqual(['Autor - Dois.epub']);
