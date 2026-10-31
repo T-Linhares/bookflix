@@ -1,7 +1,7 @@
 import { PLACEHOLDER_REPO } from '../shared/bugReport.ts';
 
 /** Kept equal to package.json by a test (tests/version-check.test.ts). */
-export const APP_VERSION = '0.3.0';
+export const APP_VERSION = '0.3.1';
 
 /**
  * "owner/repo" on GitHub: where releases are announced and bug reports go. Replace the value before the first public
