@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import os from 'node:os';
 
 import { BODY_LIMIT, buildIssueUrl, diagnosticText, isAllowedExternalUrl } from '../shared/bugReport.ts';
+import { KEY_PAGES } from '../shared/keyPages.ts';
 
 const REPO = 'dono/bookflix';
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -94,6 +95,24 @@ describe('external links (T23)', () => {
     'https://github.com/dono/bookflix/releases/tag/v0.3.0',
     'https://GITHUB.com/dono/bookflix',
   ])('allows %s', (u) => expect(isAllowedExternalUrl(u)).toBe(true));
+
+  it('allows the pages where each API key is created, and only those hosts', () => {
+    expect(Object.keys(KEY_PAGES).sort()).toEqual(['anthropic', 'gemini', 'googleBooks', 'openai']);
+    for (const url of Object.values(KEY_PAGES)) expect(isAllowedExternalUrl(url)).toBe(true);
+    expect(KEY_PAGES.gemini).toBe('https://aistudio.google.com/apikey');
+    expect(KEY_PAGES.anthropic).toBe('https://console.anthropic.com/settings/keys');
+    expect(KEY_PAGES.openai).toBe('https://platform.openai.com/api-keys');
+    expect(KEY_PAGES.googleBooks).toBe('https://console.cloud.google.com/apis/library/books.googleapis.com');
+  });
+
+  it.each([
+    'https://aistudio.google.com.evil.example/apikey',
+    'https://google.com/',
+    'https://console.cloud.google.com:8443/apis',
+    'https://platform.openai.com@evil.example/api-keys',
+    'http://console.anthropic.com/settings/keys',
+    'https://anthropic.com/',
+  ])('refuses %s', (u) => expect(isAllowedExternalUrl(u)).toBe(false));
 
   it.each([
     'http://github.com/dono/bookflix',

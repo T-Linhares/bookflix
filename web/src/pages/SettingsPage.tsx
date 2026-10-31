@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import { api } from '../api';
 import { Settings } from '../types';
 import { ErrorBox, Spinner, toast, useAsync } from '../components/ui';
+import { KEY_PAGES } from '../../../shared/keyPages';
 
 /** The native dialog exists only inside the desktop app; in a plain browser the path is typed. */
 function PathField({ label, hint, value, onChange }: { label: string; hint: ReactNode; value: string; onChange: (v: string) => void }) {
@@ -181,7 +182,17 @@ function CloudShortcuts({ onPick }: { onPick: (path: string) => void }) {
   );
 }
 
-function AiKeyField({ label, provider, value, onChange, hint }: { label: string; provider: 'gemini' | 'anthropic' | 'openai'; value: string; onChange: (v: string) => void; hint: ReactNode }) {
+/** Opens the page where the key is created: the system browser in the desktop app, a new tab otherwise. */
+function GetKeyButton({ url, label = 'Obter chave' }: { url: string; label?: string }) {
+  const open = () => (window.bookflix ? void window.bookflix.openExternal(url) : void window.open(url, '_blank', 'noopener,noreferrer'));
+  return (
+    <button type="button" className="btn-ghost mt-2 !px-3 !py-1.5 text-xs" onClick={open} title={url}>
+      {label} ↗ <span className="font-normal text-muted">{new URL(url).hostname}</span>
+    </button>
+  );
+}
+
+function AiKeyField({ label, provider, value, onChange, hint, getUrl }: { label: string; provider: 'gemini' | 'anthropic' | 'openai'; value: string; onChange: (v: string) => void; hint: ReactNode; getUrl: string }) {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const test = async () => {
@@ -209,6 +220,7 @@ function AiKeyField({ label, provider, value, onChange, hint }: { label: string;
         </p>
       )}
       <p className="mt-1 text-xs text-muted">{hint}</p>
+      <GetKeyButton url={getUrl} />
     </div>
   );
 }
@@ -342,7 +354,7 @@ export default function SettingsPage() {
 
       <section className="card space-y-4">
         <h2 className="font-semibold">Chaves de API (opcional)</h2>
-        <p className="text-xs text-muted">Sem chaves o app usa o Google Books (cota compartilhada), o Open Library e a BrasilAPI gratuitamente. As chaves são suas, ficam salvas só neste computador e as consultas vão direto do seu computador para cada serviço.</p>
+        <p className="text-xs text-muted">Sem chaves o app usa o Google Books (cota compartilhada), o Open Library e a BrasilAPI gratuitamente. As chaves são suas e as consultas vão direto do seu computador para cada serviço; nada passa por servidores do Bookflix.</p>
         <div>
           <span className="label">Google Books API key</span>
           <div className="flex gap-2">
@@ -359,6 +371,7 @@ export default function SettingsPage() {
           <p className="mt-1 text-xs text-muted">
             Como criar (grátis): Google Cloud Console → criar projeto → APIs e serviços → ativar "Books API" → Credenciais → Criar chave de API.
           </p>
+          <GetKeyButton url={KEY_PAGES.googleBooks} label="Ativar a Books API e criar a chave" />
         </div>
         <AiKeyField
           label="Gemini API key (grátis)"
@@ -366,9 +379,19 @@ export default function SettingsPage() {
           value={s.geminiKey}
           onChange={(v) => up('geminiKey', v)}
           hint="Crie em aistudio.google.com → Get API key."
+          getUrl={KEY_PAGES.gemini}
         />
-        <AiKeyField label="Anthropic API key" provider="anthropic" value={s.anthropicKey} onChange={(v) => up('anthropicKey', v)} hint="console.anthropic.com → API keys (pago por uso)." />
-        <AiKeyField label="OpenAI API key (ChatGPT)" provider="openai" value={s.openaiKey} onChange={(v) => up('openaiKey', v)} hint="platform.openai.com → API keys (pago por uso). Uma assinatura do ChatGPT não inclui acesso à API." />
+        <AiKeyField label="Anthropic API key" provider="anthropic" value={s.anthropicKey} onChange={(v) => up('anthropicKey', v)} hint="console.anthropic.com → API keys (pago por uso)." getUrl={KEY_PAGES.anthropic} />
+        <AiKeyField label="OpenAI API key (ChatGPT)" provider="openai" value={s.openaiKey} onChange={(v) => up('openaiKey', v)} hint="platform.openai.com → API keys (pago por uso). Uma assinatura do ChatGPT não inclui acesso à API." getUrl={KEY_PAGES.openai} />
+        <label className="flex items-start gap-3 text-sm">
+          <input type="checkbox" className="mt-1 accent-[#e50914]" checked={s.syncKeys} onChange={(e) => up('syncKeys', e.target.checked)} />
+          <span>
+            Sincronizar estas chaves com meus outros computadores
+            <span className="block text-xs text-muted">
+              Vale só com a sincronização ativada: as chaves vão para a pasta compartilhada (Drive/Dropbox) criptografadas com o ID da biblioteca, e os computadores com o mesmo ID passam a usá-las. Atenção: o ID fica na própria pasta, então isso só impede que as chaves apareçam em texto aberto. Quem tiver acesso à pasta consegue abri-las. Desmarque se isso não serve para você.
+            </span>
+          </span>
+        </label>
         <label className="block max-w-xs">
           <span className="label">Qual modelo consultar primeiro</span>
           <select className="input" value={s.aiOrder} onChange={(e) => up('aiOrder', e.target.value as Settings['aiOrder'])}>

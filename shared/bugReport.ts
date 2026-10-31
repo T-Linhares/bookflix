@@ -42,9 +42,10 @@ export function buildIssueUrl({ repo, text, diagnostic }: { repo: string; text: 
   return { url: `https://github.com/${repo}/issues/new?${q}`, truncated, fullText };
 }
 
-const ALLOWED_HOSTS = new Set(['github.com']);
+// the last four are the sites where API keys are created (see keyPages.ts; a test keeps both lists in step)
+const ALLOWED_HOSTS = new Set(['github.com', 'console.cloud.google.com', 'aistudio.google.com', 'console.anthropic.com', 'platform.openai.com']);
 
-/** The only links the app ever opens in the browser: https on an allow-listed host, no credentials, default port. */
+/** The only links the app ever opens in the browser: https on an allow-listed host (GitHub and the API key pages), no credentials, default port. */
 export function isAllowedExternalUrl(raw: string): boolean {
   try {
     const u = new URL(raw);

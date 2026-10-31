@@ -17,6 +17,8 @@ export interface Settings {
   /** which model is asked first; "auto" = Gemini (free tier), then Anthropic, then OpenAI */
   aiOrder: 'auto' | AiProvider;
   googleBooksKey: string;
+  /** share the API keys above with the other computers of the same sync library (encrypted with the library id) */
+  syncKeys: boolean;
   /** shows a notice when a newer release exists on GitHub (one anonymous GET, never installs anything) */
   checkUpdates: boolean;
 }
@@ -33,6 +35,7 @@ const DEFAULTS: Settings = {
   openaiKey: '',
   aiOrder: 'auto',
   googleBooksKey: '',
+  syncKeys: true,
   checkUpdates: true,
 };
 

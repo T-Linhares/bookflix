@@ -39,6 +39,7 @@ Em **Ajustes → Sincronizar entre aparelhos**. Mantém notas, destaques, progre
 - Nos outros, escolha a mesma pasta sincronizada e clique em *Entrar nela*.
 - Cada aparelho grava só o próprio arquivo em `.bookflix-sync/devices/`; o banco de dados de verdade fica sempre local (cliente de nuvem corrompe SQLite). Em edições simultâneas da mesma informação, vale a mais recente.
 - O app nunca lê, grava ou apaga os seus livros nessa pasta. Os livros viajam pelo próprio serviço de nuvem.
+- As **chaves de API** também sincronizam (dá para desligar em Ajustes → Chaves de API), criptografadas com o ID da biblioteca. Atenção: o ID fica na mesma pasta, então isso só evita texto aberto; quem acessar a pasta consegue ler as chaves. Os protetores de tela revisados também viajam por ela, em `.bookflix-sync/screensavers/`.
 - Limites: um livro só recebe notas e progresso depois que o arquivo dele chega ao aparelho; remover um livro não é sincronizado; os relógios dos aparelhos precisam estar certos; no Linux não existe cliente oficial do Google Drive (use Dropbox, ou outro serviço que sincronize uma pasta, escolhendo-a à mão).
 
 ## Nome dos arquivos

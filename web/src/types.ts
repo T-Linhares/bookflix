@@ -91,6 +91,7 @@ export interface Settings {
   openaiKey: string;
   aiOrder: 'auto' | 'gemini' | 'anthropic' | 'openai';
   googleBooksKey: string;
+  syncKeys: boolean;
   checkUpdates: boolean;
   /** false when the OS gave the app no secure store, so keys sit in plain text locally */
   secretsEncrypted: boolean;

@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { openForLibrary, sealForLibrary } from './syncCrypto.ts';
 
 /**
  * Device-to-device sync through a plain folder (inside Dropbox / Google Drive / anything that syncs files).
@@ -38,7 +39,9 @@ export class SyncError extends Error {
 const META = ['title', 'subtitle', 'authors', 'series', 'series_index', 'publisher', 'year', 'isbn', 'language', 'description', 'tags', 'pages', 'organized', 'edited_fields'];
 const STATE = ['status', 'progress', 'rating', 'review', 'last_read', 'finished_at', 'read_time', 'sent_to_kindle'];
 const HL = ['kind', 'text', 'note', 'chapter', 'page', 'color', 'created_at', 'source', 'edited', 'deleted'];
-const SHARED = ['nameTemplate', 'useFolders', 'yearlyGoal'];
+const SHARED = ['nameTemplate', 'useFolders', 'yearlyGoal', 'aiOrder'];
+// API keys: encrypted with the library id (see syncCrypto.ts); a computer can opt out by not giving the engine a `secrets` store
+const SECRET_FIELDS = ['anthropicKey', 'geminiKey', 'openaiKey', 'googleBooksKey'];
 // screensavers: the data about a picture; its bytes go to <sync folder>/screensavers/<id>.<ext>
 const SS = ['ext', 'name', 'tags', 'device', 'note', 'favorite', 'deleted', 'width', 'height', 'size', 'added_at'];
 
@@ -81,6 +84,8 @@ interface DeviceFile {
   settings: { u: number; f: Fields };
   /** reviewed screensavers only (older files do not have this) */
   screensavers?: Record<string, SsEntry>;
+  /** API keys, each encrypted with the library id; absent when that computer does not share keys */
+  secrets?: { u: number; f: Record<string, string> };
 }
 
 export interface SyncSummary {
@@ -111,14 +116,17 @@ export class SyncEngine {
   private reindex: (bookId: number) => void;
   /** this computer's folder of screensaver pictures; without it the pictures are not synced */
   private ssDir?: string;
+  /** this computer's API keys; without it keys are neither shared nor received */
+  private secrets?: { read(): Record<string, string>; write(values: Record<string, string>): void };
 
-  constructor(o: { db: DatabaseSync; dir: string; deviceId: string; now?: () => number; reindex?: (bookId: number) => void; screensaverDir?: string }) {
+  constructor(o: { db: DatabaseSync; dir: string; deviceId: string; now?: () => number; reindex?: (bookId: number) => void; screensaverDir?: string; secrets?: SyncEngine['secrets'] }) {
     this.db = o.db;
     this.dir = o.dir;
     this.deviceId = o.deviceId;
     this.now = o.now ?? Date.now;
     this.reindex = o.reindex ?? (() => {});
     this.ssDir = o.screensaverDir;
+    this.secrets = o.secrets;
   }
 
   // ---------- library identity ----------
@@ -264,6 +272,10 @@ export class SyncEngine {
     for (const r of this.db.prepare('select * from screensavers where reviewed = 1').all() as Record<string, any>[]) {
       const f = this.pick(r, SS);
       file.screensavers![r.id] = { u: this.touch(`s:${r.id}`, f), f };
+    }
+    if (this.secrets && this.libraryId) {
+      const plain = this.plainSecrets();
+      file.secrets = { u: this.touch('secrets', plain), f: Object.fromEntries(SECRET_FIELDS.map((k) => [k, sealForLibrary(String(plain[k]), this.libraryId!)])) };
     }
     return file;
   }
@@ -439,6 +451,37 @@ export class SyncEngine {
     }
   }
 
+  // ---------- API keys ----------
+
+  private plainSecrets(): Fields {
+    const now = this.secrets!.read();
+    return Object.fromEntries(SECRET_FIELDS.map((k) => [k, now[k] ?? '']));
+  }
+
+  private mergeSecrets(remotes: DeviceFile[], summary: SyncSummary) {
+    if (!this.secrets || !this.libraryId) return;
+    for (const file of remotes) {
+      if (!file.secrets) continue;
+      const remote: Fields = {};
+      let readable = true;
+      for (const k of SECRET_FIELDS) {
+        const v = openForLibrary(String(file.secrets.f?.[k] ?? ''), this.libraryId);
+        if (v === null) readable = false;
+        remote[k] = v ?? '';
+      }
+      if (!readable) {
+        summary.warnings.push(`${file.deviceId}: as chaves de API não puderam ser lidas (outra biblioteca ou arquivo alterado) e foram ignoradas.`);
+        continue;
+      }
+      const localF = this.plainSecrets();
+      const local = { u: this.touch('secrets', localF), f: localF };
+      if (!this.remoteWins({ u: file.secrets.u, f: remote, dev: file.deviceId }, local, (f) => SECRET_FIELDS.every((k) => !f[k]))) continue;
+      this.secrets.write(remote as Record<string, string>);
+      this.remember('secrets', this.plainSecrets(), file.secrets.u);
+      summary.applied++;
+    }
+  }
+
   // ---------- screensavers ----------
 
   private sharedImage = (id: string, ext: string) => path.join(this.dir, 'screensavers', `${id}.${ext}`);
@@ -530,6 +573,7 @@ export class SyncEngine {
       this.mergeHighlights(remotes, summary);
       this.mergeRest(remotes, summary);
       this.mergeScreensavers(remotes, summary);
+      this.mergeSecrets(remotes, summary);
       this.db.exec('COMMIT');
     } catch (e) {
       this.db.exec('ROLLBACK');
