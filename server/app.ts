@@ -11,7 +11,7 @@ import { secretsProtected } from './secrets.ts';
 import { testAiKey } from './metadata/generate.ts';
 import { enableSync, disableSync, runSync, scheduleSync, syncStatus } from './syncService.ts';
 import { APP_VERSION, getRepo } from './version.ts';
-import { checkForUpdate } from './versionCheck.ts';
+import { checkForUpdate, checkUpdateStatus } from './versionCheck.ts';
 import { CloudFolders, detectCloudFolders } from './cloudFolders.ts';
 import { listBooks, parseFilters, facets, homeRows } from './query.ts';
 import { scanLibrary, watchLibrary } from './library.ts';
@@ -20,7 +20,7 @@ import {
 } from './ingest.ts';
 import { importFromKindle, linkUnmatched } from './kindle/import.ts';
 import { detectKindle, readyBookIds, sendToKindle } from './kindle/send.ts';
-import { planRemoval, removeFromKindle } from './kindle/remove.ts';
+import { planBookRemoval, planRemoval, removeBooksFromKindle, removeFromKindle } from './kindle/remove.ts';
 import { dismissRecommendation, recommendationsFor } from './recommend.ts';
 import { testGoogleKey } from './metadata/providers.ts';
 import { dashboard } from './dashboard.ts';
@@ -126,6 +126,8 @@ export async function buildApp({ token, cloudFolders = detectCloudFolders }: App
   // ---------- about / updates / cloud folders ----------
   app.get('/api/about', async () => ({ version: APP_VERSION, repo: getRepo(), platform: process.platform, arch: process.arch }));
   // a notice only: the app never downloads or installs anything by itself
+  /** The "Procurar atualização" button: checks now, whatever the automatic setting says, and tells why when it cannot. */
+  app.post('/api/update-check', async () => ({ ...(await checkUpdateStatus({ current: APP_VERSION, repo: getRepo(), force: true })), current: APP_VERSION }));
   app.get('/api/update-check', async () => ({ update: await checkForUpdate({ current: APP_VERSION, repo: getRepo(), enabled: getSettings().checkUpdates }) }));
   app.get('/api/cloud-folders', async () => cloudFolders());
   // the only place the server creates a folder on its own: "Livros" inside the Dropbox / Drive folder it detected
@@ -337,6 +339,21 @@ export async function buildApp({ token, cloudFolders = detectCloudFolders }: App
     if (!ids.length) throw Object.assign(new Error('Nenhum item selecionado.'), { statusCode: 400 });
     if ((req.body as any)?.confirm !== true) throw Object.assign(new Error('Confirmação necessária para apagar do Kindle.'), { statusCode: 400 });
     return removeFromKindle(ids);
+  });
+  /**
+   * Takes library books off the Kindle: the Kindle copy is deleted, the book stays in the library.
+   * Same two steps as above: a dry run, then the real thing only with `confirm: true`.
+   */
+  const bookIdList = (body: any) => {
+    const ids = ((body?.bookIds ?? []) as unknown[]).map(num).filter(Number.isInteger);
+    if (!ids.length) throw Object.assign(new Error('Nenhum livro selecionado.'), { statusCode: 400 });
+    return ids;
+  };
+  app.post('/api/kindle/books/remove-preview', async (req) => planBookRemoval(bookIdList(req.body), (req.body as any)?.path || undefined));
+  app.post('/api/kindle/books/remove', async (req) => {
+    const ids = bookIdList(req.body);
+    if ((req.body as any)?.confirm !== true) throw Object.assign(new Error('Confirmação necessária para apagar do Kindle.'), { statusCode: 400 });
+    return removeBooksFromKindle(ids, (req.body as any)?.path || undefined);
   });
   app.post('/api/kindle/unmatched/restore', async () => {
     const r = db.prepare('update unmatched set ignored = 0 where ignored = 1').run();

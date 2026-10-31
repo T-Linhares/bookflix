@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, coverSrc, describeSend, sendToKindle } from '../api';
+import { api, coverSrc, describeSend, planKindleRemoval, removeBooksFromKindle, sendToKindle } from '../api';
 import { Book, BookDetail, Highlight, Rec, STATUS_LABEL, Status } from '../types';
 import { Cover, ErrorBox, Poster, Row, SourceBadge, Spinner, Stars, toast, useAsync } from '../components/ui';
 
@@ -160,6 +160,24 @@ export default function BookPage() {
       toast(e.message, 'err');
     }
   };
+  /** Shows what will be deleted from the Kindle and only deletes after an OK. The book stays in the library. */
+  const removeKindle = async () => {
+    try {
+      const item = (await planKindleRemoval([book.id])).items[0];
+      if (item?.blocked) return toast(`Não deu para retirar: ${item.note}.`, 'err');
+      if (item?.targets.length) {
+        const ok = window.confirm(
+          `Retirar "${book.title}" do Kindle?\n\nSerá apagado do Kindle:\n${item.targets.map((t) => `• ${t}`).join('\n')}\n\nO livro continua na biblioteca (e no Drive/Dropbox). As notas e o progresso do KOReader ficam no Kindle.`,
+        );
+        if (!ok) return;
+      }
+      const r = await removeBooksFromKindle([book.id]);
+      toast(r.errors.length ? `Erro ao apagar: ${r.errors.join('; ')}` : item?.targets.length ? 'Retirado do Kindle. O livro continua na biblioteca.' : 'O livro já não estava no Kindle; a marca foi retirada.', r.errors.length ? 'err' : 'ok');
+      reload();
+    } catch (e: any) {
+      toast(e.message, 'err');
+    }
+  };
   const addNote = async () => {
     if (!newText.trim() && !newNote.trim()) return;
     await api(`/api/books/${book.id}/highlights`, { body: { text: newText, note: newNote || null } });
@@ -242,7 +260,11 @@ export default function BookPage() {
               <a className="btn-ghost" href={`/api/books/${book.id}/export.md`}>
                 Exportar notas (.md)
               </a>
-              {!book.sent_to_kindle && (
+              {book.sent_to_kindle ? (
+                <button className="btn-ghost" onClick={removeKindle}>
+                  Retirar do Kindle
+                </button>
+              ) : (
                 <button className="btn-ghost" onClick={sendKindle}>
                   Enviar ao Kindle
                 </button>

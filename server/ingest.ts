@@ -280,7 +280,7 @@ export async function undoHistory(id: number) {
   if (!h || h.undone) throw new Error('Nada para desfazer');
   const book = h.book_id ? getBook(h.book_id) : undefined;
   if (h.action === 'add') {
-    if (book?.sent_to_kindle) throw new Error('Livro já enviado ao Kindle: remova-o manualmente.');
+    if (book?.sent_to_kindle) throw new Error('Livro já enviado ao Kindle: retire-o do Kindle (botão na página do livro) antes de desfazer.');
     if (h.new_path) await fs.rm(h.new_path, { force: true });
     if (book?.cover) await fs.rm(path.join(COVERS_DIR, book.cover), { force: true });
     if (book) db.prepare('delete from books where id = ?').run(book.id);

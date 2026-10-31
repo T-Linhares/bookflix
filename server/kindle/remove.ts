@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { db } from '../db.ts';
+import { db, getBook } from '../db.ts';
 import { isBookFile, partialMd5 } from '../util.ts';
 import { detectKindle, isKindleRoot } from './send.ts';
 
@@ -12,6 +12,8 @@ export interface RemovalItem {
   targets: string[];
   /** why nothing will be deleted for this item, if so */
   note?: string;
+  /** library books only: nothing is touched for this one (its library file is missing, so its Kindle copy cannot be told apart) */
+  blocked?: boolean;
 }
 
 export interface RemovalResult {
@@ -33,9 +35,9 @@ function safeTarget(root: string, p: string): boolean {
   return allowedRoots(root).some((a) => inside(a, p));
 }
 
-/** partial md5 -> file for every book file under documents/ (KOReader identifies books by it). */
-async function indexBooks(root: string): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
+/** partial md5 -> files for every book file under documents/ (KOReader identifies books by it). */
+export async function indexBooks(root: string): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
   async function rec(dir: string, depth: number) {
     if (depth > 7) return;
     let entries: fsSync.Dirent[];
@@ -50,7 +52,8 @@ async function indexBooks(root: string): Promise<Map<string, string>> {
         if (!e.name.endsWith('.sdr')) await rec(full, depth + 1);
       } else if (isBookFile(e.name)) {
         try {
-          out.set(await partialMd5(full), full);
+          const md5 = await partialMd5(full);
+          out.set(md5, [...(out.get(md5) ?? []), full]);
         } catch {
           // unreadable file: skip it
         }
@@ -72,7 +75,7 @@ export async function planRemoval(ids: number[], root?: string): Promise<{ root:
   const kindle = resolveRoot(root);
   const rows = db.prepare(`select * from unmatched where id in (${ids.map(() => '?').join(',')})`).all(...ids) as any[];
   const needsIndex = rows.some((r) => !r.sdr_path && r.md5);
-  const byMd5 = needsIndex ? await indexBooks(kindle) : new Map<string, string>();
+  const byMd5 = needsIndex ? await indexBooks(kindle) : new Map<string, string[]>();
 
   const items: RemovalItem[] = rows.map((r) => {
     const item: RemovalItem = { id: r.id, title: r.title, targets: [] };
@@ -97,7 +100,7 @@ export async function planRemoval(ids: number[], root?: string): Promise<{ root:
         }
       }
     } else if (r.md5 && byMd5.has(r.md5)) {
-      const file = byMd5.get(r.md5)!;
+      const file = byMd5.get(r.md5)!.at(-1)!;
       add(file);
       add(`${file.replace(/\.[^.\\/]+$/, '')}.sdr`);
       add(`${file}.sdr`);
@@ -136,6 +139,60 @@ export async function removeFromKindle(ids: number[], root?: string): Promise<Re
     const row = db.prepare('select sdr_path from unmatched where id = ?').get(item.id) as { sdr_path: string | null } | undefined;
     if (row?.sdr_path) db.prepare('delete from unmatched where id = ?').run(item.id);
     else db.prepare('update unmatched set ignored = 1 where id = ?').run(item.id);
+  }
+  return result;
+}
+
+/**
+ * What taking these library books off the Kindle would delete. The copy is found by content (the same partial md5
+ * KOReader uses), so it is found even if renamed or moved, and a different file that merely has the same name is
+ * never a target. Touches nothing.
+ */
+export async function planBookRemoval(ids: number[], root?: string): Promise<{ root: string; items: RemovalItem[] }> {
+  const kindle = resolveRoot(root);
+  const books = ids.map((id) => getBook(id)).filter((b): b is NonNullable<ReturnType<typeof getBook>> => !!b);
+  const byMd5 = books.length ? await indexBooks(kindle) : new Map<string, string[]>();
+  const items: RemovalItem[] = [];
+  for (const b of books) {
+    const item: RemovalItem = { id: b.id, title: b.title || b.filename, targets: [] };
+    items.push(item);
+    if (b.missing || !fsSync.existsSync(b.path)) {
+      item.blocked = true;
+      item.note = 'o arquivo deste livro não está na biblioteca, então não dá para saber qual é a cópia no Kindle';
+      continue;
+    }
+    for (const file of byMd5.get(await partialMd5(b.path)) ?? []) if (safeTarget(kindle, file)) item.targets.push(path.relative(kindle, file));
+    if (!item.targets.length) item.note = 'o livro já não está no Kindle; só a marca "No Kindle" será tirada';
+  }
+  return { root: kindle, items };
+}
+
+/**
+ * Deletes the Kindle copies of library books and clears their "No Kindle" mark. The book in the library is not touched,
+ * and neither are the notes and progress KOReader keeps next to it (.sdr), so sending it again picks up where it was.
+ */
+export async function removeBooksFromKindle(ids: number[], root?: string): Promise<RemovalResult> {
+  const { root: kindle, items } = await planBookRemoval(ids, root);
+  const result: RemovalResult = { root: kindle, items, deleted: 0, errors: [] };
+  const clear = db.prepare('update books set sent_to_kindle = 0 where id = ?');
+  for (const item of items) {
+    if (item.blocked) continue;
+    let failed = false;
+    for (const rel of item.targets) {
+      const full = path.join(kindle, rel);
+      if (!safeTarget(kindle, full)) {
+        failed = true;
+        continue;
+      }
+      try {
+        await fs.rm(full, { force: true });
+        result.deleted++;
+      } catch (e) {
+        failed = true;
+        result.errors.push(`${rel}: ${(e as Error).message}`);
+      }
+    }
+    if (!failed) clear.run(item.id);
   }
   return result;
 }

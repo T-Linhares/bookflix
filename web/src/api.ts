@@ -37,6 +37,17 @@ export interface KindleSendResult {
 /** Copies books to documents/Livros on the plugged-in Kindle (auto-detected unless `path` is given). */
 export const sendToKindle = (body: { bookIds?: number[]; allReady?: boolean; path?: string }) => api<KindleSendResult>('/api/kindle/send', { body });
 
+export interface KindleRemovalPlan {
+  root: string;
+  items: { id: number; title: string; targets: string[]; note?: string; blocked?: boolean }[];
+}
+
+/** What taking these books off the Kindle would delete (deletes nothing). */
+export const planKindleRemoval = (bookIds: number[]) => api<KindleRemovalPlan>('/api/kindle/books/remove-preview', { body: { bookIds } });
+
+/** Deletes the books' copies from the Kindle; the library keeps them. Call only after the user confirmed. */
+export const removeBooksFromKindle = (bookIds: number[]) => api<{ deleted: number; errors: string[] }>('/api/kindle/books/remove', { body: { bookIds, confirm: true } });
+
 export function describeSend(r: KindleSendResult): { text: string; kind: 'ok' | 'err' } {
   const parts: string[] = [];
   if (r.copied.length) parts.push(`${r.copied.length} enviado${r.copied.length > 1 ? 's' : ''}`);

@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { BookRow, clean, db, getBook, getSetting, parseBook, reindexBook, setSetting, tx } from '../db.ts';
-import { norm, now, partialMd5, sha1 } from '../util.ts';
+import { isBookFile, norm, now, partialMd5, sha1 } from '../util.ts';
+import { indexBooks } from './remove.ts';
 
 /**
  * Id of a Kindle highlight. Built from the book's file hash, which is the same on every computer, so two devices that
@@ -60,6 +61,26 @@ async function findStatsDb(root: string): Promise<string | null> {
     if (fsSync.existsSync(p)) return p;
   }
   return null;
+}
+
+/**
+ * Whether a book is physically on the device. A sidecar (.sdr) or a statistics row stays behind when the book is deleted,
+ * so by themselves they do not mean "No Kindle". A copy of the folders without documents/ cannot tell, so it counts as yes.
+ */
+async function bookPresence(root: string): Promise<(md5?: string | null, sdr?: string) => boolean> {
+  if (!fsSync.existsSync(path.join(root, 'documents'))) return () => true;
+  const md5s = await indexBooks(root);
+  return (md5, sdr) => {
+    if (md5 && md5s.has(md5)) return true;
+    if (!sdr) return false;
+    // the book file sits beside its sidecar: "Livro.sdr" for "Livro.epub" (older KOReader: "Livro.epub.sdr")
+    const base = path.basename(sdr, '.sdr');
+    try {
+      return fsSync.readdirSync(path.dirname(sdr)).some((f) => isBookFile(f) && (f === base || f.replace(/\.[^.]+$/, '') === base));
+    } catch {
+      return false;
+    }
+  };
 }
 
 function matchBook(opts: { md5?: string; fileName?: string; title?: string; authors?: string }): BookRow | undefined {
@@ -162,10 +183,14 @@ async function pushToSidecar(book: BookRow, sc: Sidecar, luaPath: string): Promi
   return pushed;
 }
 
-function applySidecar(book: BookRow, sc: Sidecar): number {
+function applySidecar(book: BookRow, sc: Sidecar, onDevice: boolean): number {
   const edited = new Set(book.edited_fields);
-  const upd: Record<string, unknown> = { id: book.id, sent_to_kindle: 1, progress: sc.percent };
-  const cols = ['sent_to_kindle = :sent_to_kindle', 'progress = :progress'];
+  const upd: Record<string, unknown> = { id: book.id, progress: sc.percent };
+  const cols = ['progress = :progress'];
+  if (onDevice) {
+    upd.sent_to_kindle = 1;
+    cols.push('sent_to_kindle = :sent_to_kindle');
+  }
   if (!edited.has('status')) {
     const status = sc.status === 'complete' ? 'read' : sc.status === 'abandoned' ? 'abandoned' : sc.status === 'reading' || sc.percent > 0 ? 'reading' : 'unread';
     upd.status = status === 'reading' && sc.percent >= 0.99 ? 'read' : status;
@@ -207,7 +232,7 @@ function applySidecar(book: BookRow, sc: Sidecar): number {
   return sc.annotations.length;
 }
 
-function importStats(statsPath: string, summary: ImportSummary) {
+function importStats(statsPath: string, summary: ImportSummary, present: (md5?: string | null) => boolean) {
   const tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), 'bookflix-stats-'));
   const tmp = path.join(tmpDir, 'stats.sqlite3');
   fsSync.copyFileSync(statsPath, tmp);
@@ -234,8 +259,9 @@ function importStats(statsPath: string, summary: ImportSummary) {
         db.prepare('delete from reading_days where book_id = ?').run(book.id);
         const ins = db.prepare('insert into reading_days(book_id, day, seconds, pages) values(?,?,?,?)');
         for (const r of rows) if (r.day) ins.run(book.id, r.day, r.seconds ?? 0, r.pages ?? 0);
-        db.prepare('update books set read_time = ?, sent_to_kindle = 1, pages = coalesce(pages, ?), last_read = max(coalesce(last_read, 0), ?) where id = ?').run(
+        db.prepare('update books set read_time = ?, sent_to_kindle = max(sent_to_kindle, ?), pages = coalesce(pages, ?), last_read = max(coalesce(last_read, 0), ?) where id = ?').run(
           kb.total_read_time ?? 0,
+          present(kb.md5) ? 1 : 0,
           kb.pages || null,
           kb.last_open ?? 0,
           book.id,
@@ -256,6 +282,7 @@ export async function importFromKindle(root: string): Promise<ImportSummary> {
   setSetting('lastKindleRoot', root);
   const summary: ImportSummary = { root, sidecars: 0, matched: 0, unmatched: 0, highlights: 0, pushed: noPush(), statsBooks: 0, readingDays: 0, errors: [] };
 
+  const present = await bookPresence(root);
   for (const sdr of await findSdrs(root)) {
     try {
       const files = await fs.readdir(sdr);
@@ -274,7 +301,7 @@ export async function importFromKindle(root: string): Promise<ImportSummary> {
         summary.unmatched++;
         continue;
       }
-      summary.highlights += tx(() => applySidecar(book, sc));
+      summary.highlights += tx(() => applySidecar(book, sc, present(md5, sdr)));
       summary.matched++;
       const p = await pushToSidecar(book, sc, path.join(sdr, lua));
       for (const k of Object.keys(p) as (keyof Pushed)[]) summary.pushed[k] += p[k];
@@ -286,7 +313,7 @@ export async function importFromKindle(root: string): Promise<ImportSummary> {
   const statsPath = await findStatsDb(root);
   if (statsPath) {
     try {
-      importStats(statsPath, summary);
+      importStats(statsPath, summary, present);
     } catch (e) {
       summary.errors.push(`statistics.sqlite3: ${(e as Error).message}`);
     }
