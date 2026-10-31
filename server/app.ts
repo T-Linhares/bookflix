@@ -77,6 +77,7 @@ export async function buildApp({ token, cloudFolders = detectCloudFolders }: App
     const msg = String(err?.message ?? err);
     if (err?.name === 'SyncError') return reply.code(409).send({ code: err.code, error: msg });
     if (msg === 'KINDLE_SENT') return reply.code(409).send({ code: 'KINDLE_SENT', error: 'Livro já enviado ao Kindle.' });
+    if (msg === 'NOT_EPUB') return reply.code(409).send({ code: 'NOT_EPUB', error: 'Este arquivo não é um EPUB.' });
     if (msg === 'DUPLICATE') return reply.code(409).send({ code: 'DUPLICATE', error: 'Já existe um livro igual na biblioteca.' });
     if (err?.statusCode && err.statusCode < 500) return reply.code(err.statusCode).send({ error: msg });
     app.log.error(err);

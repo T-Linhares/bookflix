@@ -232,3 +232,44 @@ describe('search, filters, home and dashboard', () => {
     expect(d.goal.target).toBe(12);
   });
 });
+
+describe('files that are not EPUB', () => {
+  const pdfBytes = async () => {
+    const { PDFDocument } = await import('pdf-lib');
+    const doc = await PDFDocument.create();
+    doc.addPage();
+    return Buffer.from(await doc.save());
+  };
+  const meta = { title: 'Um PDF Qualquer', authors: ['Fulano de Tal'], tags: [] };
+
+  it('asks before saving a PDF, even when it is named .epub, and shows it in the preview', async () => {
+    const up = json(await app.inject({ method: 'POST', url: '/api/ingest/upload', ...multipart('disfarcado.epub', await pdfBytes()) }));
+    expect(up[0].format).toBe('pdf');
+    const pv = json(await app.inject({ method: 'POST', url: `/api/ingest/${up[0].id}/preview`, payload: { meta } }));
+    expect(pv.format).toBe('pdf');
+    expect(pv.needsFormatDecision).toBe(true);
+    expect(pv.fileName).toBe('Fulano de Tal - Um PDF Qualquer.pdf');
+
+    const res = await app.inject({ method: 'POST', url: `/api/ingest/${up[0].id}/commit`, payload: { meta } });
+    expect(res.statusCode).toBe(409);
+    expect(json(res).code).toBe('NOT_EPUB');
+    await app.inject({ method: 'DELETE', url: `/api/ingest/${up[0].id}` });
+  });
+
+  it('saves the PDF as a valid .pdf once the user chose to keep it', async () => {
+    const up = json(await app.inject({ method: 'POST', url: '/api/ingest/upload', ...multipart('disfarcado.epub', await pdfBytes()) }));
+    const res = await app.inject({ method: 'POST', url: `/api/ingest/${up[0].id}/commit`, payload: { meta, keepFormat: true } });
+    expect(res.statusCode).toBe(200);
+    const book = json(res);
+    expect(book.format).toBe('pdf');
+    expect(path.extname(book.path)).toBe('.pdf');
+    expect(fs.readFileSync(book.path).subarray(0, 5).toString()).toBe('%PDF-');
+  });
+
+  it('does not ask for a real EPUB', async () => {
+    const up = json(await app.inject({ method: 'POST', url: '/api/ingest/upload', ...multipart('ok.epub', await makeEpub({ title: 'Normal', authors: ['Beltrano'] })) }));
+    const pv = json(await app.inject({ method: 'POST', url: `/api/ingest/${up[0].id}/preview`, payload: { meta: { title: 'Normal', authors: ['Beltrano'], tags: [] } } }));
+    expect(pv.needsFormatDecision).toBe(false);
+    await app.inject({ method: 'DELETE', url: `/api/ingest/${up[0].id}` });
+  });
+});

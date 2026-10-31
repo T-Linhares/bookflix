@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import chokidar, { type FSWatcher } from 'chokidar';
 import { BookRow, COVERS_DIR, STAGING_DIR, TRASH_DIR, clean, db, getBook, parseBook, reindexBook, tx } from './db.ts';
-import { Cover, Meta, WRITABLE, applyMeta, formatOf, readMeta } from './formats/index.ts';
+import { Cover, Meta, WRITABLE, applyMeta, detectFormat, formatOf, readMeta } from './formats/index.ts';
 import { buildRelPath } from './naming.ts';
 import { getSettings } from './settings.ts';
 import { toAbs, toRel } from './relpath.ts';
@@ -61,7 +61,7 @@ export async function createStaging(opts: { file: string; originalName?: string;
   const hash = await partialMd5(opts.file);
   const res = db
     .prepare('insert into staging(path, original_name, format, owned, source, book_id, extracted, hash, created_at) values(?,?,?,?,?,?,?,?,?)')
-    .run(opts.file, opts.originalName ?? path.basename(opts.file), formatOf(opts.file), opts.owned ? 1 : 0, opts.source, opts.bookId ?? null, '{}', hash, now());
+    .run(opts.file, opts.originalName ?? path.basename(opts.file), await detectFormat(opts.file), opts.owned ? 1 : 0, opts.source, opts.bookId ?? null, '{}', hash, now());
   const id = Number(res.lastInsertRowid);
   let coverName: string | null = null;
   if (cover) coverName = await saveCover(`staging-${id}`, cover);
@@ -153,6 +153,11 @@ export function previewCommit(id: number, rawMeta: Partial<Meta>) {
   const warnings: string[] = [];
   const book = s.book_id ? getBook(s.book_id) : undefined;
   if (book?.sent_to_kindle) warnings.push('Este livro já foi enviado ao Kindle: renomear ou editar faz o KOReader tratá-lo como livro novo (notas e progresso ficam no arquivo antigo).');
+  // the library is meant to be EPUB: anything else is the user's call (books already in the library were accepted before)
+  const needsFormatDecision = !s.book_id && s.format !== 'epub';
+  const declared = formatOf(s.path);
+  if (needsFormatDecision && declared !== s.format)
+    warnings.push(`Este arquivo se chama .${declared}, mas por dentro é ${s.format.toUpperCase()}.`);
   if (!WRITABLE.has(s.format)) warnings.push(`Metadados não podem ser gravados dentro de arquivos .${s.format}: só o nome e a organização em pastas serão aplicados.`);
   if (!meta.title) warnings.push('Sem título.');
   if (!meta.authors.length) warnings.push('Sem autor: o arquivo vai para "Autor Desconhecido".');
@@ -164,6 +169,8 @@ export function previewCommit(id: number, rawMeta: Partial<Meta>) {
     duplicates: findDuplicates(s, meta),
     warnings,
     sentToKindle: !!book?.sent_to_kindle,
+    format: s.format,
+    needsFormatDecision,
   };
 }
 
@@ -173,6 +180,8 @@ export interface CommitOptions {
   coverUrl?: string | null;
   moveOriginal?: boolean;
   force?: boolean;
+  /** the user chose to keep a file that is not an EPUB */
+  keepFormat?: boolean;
 }
 
 export async function commitStaging(id: number, opts: CommitOptions): Promise<BookRow> {
@@ -183,6 +192,7 @@ export async function commitStaging(id: number, opts: CommitOptions): Promise<Bo
   if (prev?.sent_to_kindle && !opts.force) throw new Error('KINDLE_SENT');
 
   const pv = previewCommit(id, opts.meta);
+  if (pv.needsFormatDecision && !opts.keepFormat) throw new Error('NOT_EPUB');
   if (pv.duplicates.length && !opts.force) throw new Error('DUPLICATE');
   const meta = normalizeMeta(opts.meta);
   const target = pv.targetPath;

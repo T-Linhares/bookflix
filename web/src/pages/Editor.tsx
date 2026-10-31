@@ -42,6 +42,8 @@ interface Preview {
   duplicates: { id: number; title: string; authors: string; path: string }[];
   warnings: string[];
   sentToKindle: boolean;
+  format: string;
+  needsFormatDecision: boolean;
 }
 
 const FIELD_LABEL: Record<string, string> = { title: 'título', series: 'série', seriesIndex: 'ordem na série', publisher: 'editora', year: 'ano', tags: 'tags', description: 'descrição', isbn: 'ISBN' };
@@ -111,6 +113,7 @@ export default function Editor() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewError, setPreviewError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [keepFormat, setKeepFormat] = useState(false);
   const [notes, setNotes] = useState<{ tone: 'warn' | 'info'; text: string; link?: boolean }[]>([]);
   const manual = useRef(new Set<Field>());
   const formRef = useRef(form);
@@ -216,7 +219,7 @@ export default function Editor() {
   const save = async (force = false) => {
     setSaving(true);
     try {
-      const book = await api(`/api/ingest/${id}/commit`, { body: { meta, sources, coverUrl, force } });
+      const book = await api(`/api/ingest/${id}/commit`, { body: { meta, sources, coverUrl, force, keepFormat } });
       toast('Livro salvo na pasta Livros ✓');
       nav(`/livro/${book.id}`);
     } catch (e) {
@@ -405,8 +408,29 @@ export default function Editor() {
             ) : (
               <div className="text-sm text-muted">Calculando…</div>
             )}
+            {preview?.needsFormatDecision && (
+              <div className="mt-4 rounded-lg border border-line bg-surface p-3 text-sm" role="alert">
+                <p className="font-semibold text-warn">Este arquivo não é um EPUB, é um {preview.format.toUpperCase()}.</p>
+                <p className="mt-1 text-muted">
+                  O Bookflix organiza a biblioteca em EPUB e não converte formatos. O que você prefere fazer?
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button className={keepFormat ? 'btn-primary' : 'btn-ghost'} onClick={() => setKeepFormat((k) => !k)} aria-pressed={keepFormat}>
+                    {keepFormat ? `✓ Vai ficar como ${preview.format.toUpperCase()}` : `Manter como ${preview.format.toUpperCase()}`}
+                  </button>
+                  <button className="btn-ghost" onClick={discard}>
+                    Descartar e procurar um EPUB
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="mt-4 flex flex-wrap gap-2">
-              <button className="btn-primary" disabled={saving || !!previewError || !meta.title} onClick={() => save(false)}>
+              <button
+                className="btn-primary"
+                disabled={saving || !!previewError || !meta.title || (!!preview?.needsFormatDecision && !keepFormat)}
+                title={preview?.needsFormatDecision && !keepFormat ? 'Escolha acima o que fazer com este arquivo que não é EPUB' : undefined}
+                onClick={() => save(false)}
+              >
                 {saving ? 'Salvando…' : 'Salvar na pasta Livros'}
               </button>
               <button className="btn-ghost" onClick={discard}>

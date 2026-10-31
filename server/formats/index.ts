@@ -12,12 +12,26 @@ export { metaFromFilename, splitSeriesFromTitle } from './filename.ts';
 
 export const formatOf = (file: string) => path.extname(file).slice(1).toLowerCase();
 
+/** The real format of a file: its first bytes win over the extension (some sources ship PDFs named .epub). */
+export async function detectFormat(file: string): Promise<string> {
+  const ext = formatOf(file);
+  const fh = await fs.open(file, 'r');
+  try {
+    const head = Buffer.alloc(5);
+    const { bytesRead } = await fh.read(head, 0, 5, 0);
+    if (bytesRead === 5 && head.toString('latin1') === '%PDF-') return 'pdf';
+  } finally {
+    await fh.close();
+  }
+  return ext;
+}
+
 /** Formats whose metadata we can write back into the file. */
 export const WRITABLE = new Set(['epub', 'pdf']);
 
 /** Reads embedded metadata, filling gaps from the file name. */
 export async function readMeta(file: string): Promise<{ meta: Meta; cover?: Cover; sources: Record<string, string> }> {
-  const fmt = formatOf(file);
+  const fmt = await detectFormat(file);
   const buf = await fs.readFile(file);
   let embedded: Meta | undefined;
   let cover: Cover | undefined;
