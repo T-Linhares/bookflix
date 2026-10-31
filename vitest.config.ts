@@ -10,6 +10,7 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     env: { BOOKFLIX_DATA: data },
     fileParallelism: false,
+    setupFiles: ['tests/setup-guard.ts'],
     testTimeout: 30000,
   },
 });

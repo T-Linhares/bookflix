@@ -2,6 +2,7 @@ import { Meta } from '../formats/types.ts';
 import { Candidate, Seed, Source, searchBrasilApi, searchGoogle, searchOpenLibrary, cleanTags, providerStatus, GOOGLE_MESSAGES } from './providers.ts';
 import { generateMissing } from './generate.ts';
 import { aiAvailable } from '../settings.ts';
+import { googleBlockedFor } from './guard.ts';
 import { splitSeriesFromTitle } from '../formats/filename.ts';
 
 export type Field = keyof Meta | 'cover';
@@ -137,7 +138,10 @@ export async function lookupMetadata(seed: Seed, current: { meta: Meta; sources:
   const foundOnline = candidates.some((c) => ['google', 'brasilapi', 'openlibrary'].includes(c.source) && !c.crossLanguage);
   const warnings: string[] = [];
   const gStatus = providerStatus.google;
-  if (gStatus && gStatus !== 'ok') warnings.push(GOOGLE_MESSAGES[gStatus] ?? `Google Books indisponível (${gStatus}).`);
+  if (gStatus && gStatus !== 'ok') {
+    const wait = gStatus === 'quota' ? googleBlockedFor() : 0;
+    warnings.push((GOOGLE_MESSAGES[gStatus] ?? `Google Books indisponível (${gStatus}).`) + (wait ? ` Volto a tentar sozinho em cerca de ${Math.max(1, Math.ceil(wait / 60000))} min.` : ''));
+  }
   const nTags = (merged.tags?.value as string[] | undefined)?.length ?? 0;
   if (nTags > 0 && nTags < MIN_TAGS)
     warnings.push(

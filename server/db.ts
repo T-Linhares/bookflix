@@ -94,6 +94,9 @@ create table if not exists screensavers(
   reviewed integer not null default 0, deleted integer not null default 0, source text, added_at integer
 );
 
+-- answers from Google Books, so asking again costs no quota (see metadata/guard.ts). Local only: never synced.
+create table if not exists lookup_cache(key text primary key, json text not null, at integer not null);
+
 -- what each synced item looked like the last time it was exchanged, and since when it has been that way (see sync.ts)
 create table if not exists sync_state(key text primary key, hash text not null, u integer not null);
 `);

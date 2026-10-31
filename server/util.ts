@@ -72,11 +72,13 @@ export async function fetchJson<T = any>(url: string, init: RequestInit = {}, ti
   }
 }
 
-export async function fetchRaw(url: string, timeoutMs = 8000): Promise<{ status: number; json: any; error?: any }> {
+export async function fetchRaw(url: string, timeoutMs = 8000): Promise<{ status: number; json: any; error?: any; retryAfter?: number }> {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
     const body = await res.json().catch(() => null);
-    return res.ok ? { status: res.status, json: body } : { status: res.status, json: null, error: body?.error };
+    if (res.ok) return { status: res.status, json: body };
+    const wait = Number(res.headers.get('retry-after'));
+    return { status: res.status, json: null, error: body?.error, retryAfter: Number.isFinite(wait) && wait > 0 ? wait : undefined };
   } catch {
     return { status: 0, json: null };
   }

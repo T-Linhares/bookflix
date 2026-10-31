@@ -2,6 +2,7 @@ import { fetchJson, fetchRaw, similarity } from '../util.ts';
 import { Meta } from '../formats/types.ts';
 import { saneSeriesIndex } from '../formats/filename.ts';
 import { googleKey } from '../settings.ts';
+import { googleRequest, isQuotaError } from './guard.ts';
 
 export type Source = 'google' | 'brasilapi' | 'openlibrary' | 'embedded' | 'livro' | 'filename' | 'gerado' | 'manual';
 
@@ -63,14 +64,14 @@ export function classifyGoogle(res: { status: number; error?: any }): 'ok' | 'qu
   if (res.status === 200) return 'ok';
   if (res.status === 0) return 'offline';
   const reasons = JSON.stringify(res.error ?? '');
-  if (res.status === 429 || /rateLimitExceeded|RATE_LIMIT/.test(reasons)) return 'quota';
+  if (isQuotaError(res)) return 'quota';
   if (res.status === 400 && /API_KEY_INVALID|API key not valid/i.test(reasons)) return 'chave-invalida';
   if (res.status === 403 || /SERVICE_DISABLED|accessNotConfigured|API_KEY_SERVICE_BLOCKED/.test(reasons)) return 'api-desativada';
   return `erro ${res.status}`;
 }
 
 export const GOOGLE_MESSAGES: Record<string, string> = {
-  quota: 'Google Books recusou a busca: o limite diário da cota gratuita compartilhada acabou. A busca continua no Open Library e na BrasilAPI; para mais resultados, crie uma chave gratuita (Google Cloud, Books API) e cole em Ajustes.',
+  quota: 'Google Books recusou a busca: o limite de consultas foi atingido (a cota gratuita compartilhada é pequena). O Bookflix pausa o Google por um tempo e continua no Open Library e na BrasilAPI. Para ter uma cota só sua, crie uma chave gratuita (Google Cloud, Books API) e cole em Ajustes.',
   'chave-invalida': 'A chave do Google Books em Ajustes não é válida. Confira se copiou inteira.',
   'api-desativada': 'A chave do Google Books não tem permissão: ative a "Books API" no projeto dela (Google Cloud → APIs e serviços) e, se restringiu a chave, permita essa API.',
   offline: 'Sem conexão com o Google Books.',
@@ -83,7 +84,7 @@ export async function searchGoogle(seed: Seed, max = 5): Promise<Candidate[]> {
     : [seed.title && `intitle:"${seed.title}"`, seed.authors?.[0] && `inauthor:"${seed.authors[0]}"`].filter(Boolean).join(' ');
   if (!q) return [];
   const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=${max}&printType=books${key ? `&key=${key}` : ''}`;
-  const res = await fetchRaw(url);
+  const res = await googleRequest(url);
   providerStatus.google = classifyGoogle(res);
   const data = res.json;
   const out: Candidate[] = [];
