@@ -48,8 +48,8 @@ describe('metadata cascade merge', () => {
     expect(m.authors?.value).toEqual(['Frank Herbert']); // names do not depend on language, so they are still used
   });
 
-  it('takes Open Library tags only when nobody else has any', () => {
-    expect(mergeCandidates([embedded, google, ol]).tags?.value).toEqual(['SciFi', 'Ficção']);
+  it('takes Open Library tags only to reach the minimum of 4 (or when nobody else has any)', () => {
+    expect(mergeCandidates([embedded, google, ol]).tags?.value).toEqual(['SciFi', 'Ficção', 'Space']);
     expect(mergeCandidates([{ source: 'embedded', meta: { authors: [], tags: [] } }, ol]).tags?.value).toEqual(['Space']);
   });
 

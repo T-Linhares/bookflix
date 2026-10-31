@@ -23,6 +23,9 @@ const PRIORITY: Record<string, Source[]> = {
   pages: ['google', 'brasilapi', 'openlibrary', 'embedded', 'filename'],
 };
 
+/** A book should end up with at least this many tags (sites, then Open Library, then the AI). */
+export const MIN_TAGS = 4;
+
 const has = (v: unknown) => v != null && v !== '' && !(Array.isArray(v) && !v.length);
 
 /** Pure merge step (kept separate so it is testable without network). */
@@ -39,10 +42,14 @@ export function mergeCandidates(cands: Candidate[]): Merged {
       break;
     }
   }
-  // Open Library subjects are noisy: use them only when nobody else has tags
+  // Open Library subjects are noisy: use them only when nobody else has tags, or to reach the minimum
   const trusted = cands.filter((c) => c.source !== 'openlibrary' && !c.crossLanguage);
   const pool = trusted.some((c) => c.meta.tags?.length) ? trusted : cands.filter((c) => !c.crossLanguage);
-  const tags = cleanTags(pool.flatMap((c) => c.meta.tags ?? []));
+  let tags = cleanTags(pool.flatMap((c) => c.meta.tags ?? []));
+  if (tags.length && tags.length < MIN_TAGS && pool === trusted) {
+    const extra = cands.filter((c) => c.source === 'openlibrary' && !c.crossLanguage).flatMap((c) => c.meta.tags ?? []);
+    tags = cleanTags([...tags, ...extra], MIN_TAGS);
+  }
   if (tags.length) merged.tags = { value: tags, source: pool.find((c) => c.meta.tags?.length)!.source };
   const cover = cands.find((c) => c.coverUrl);
   if (cover) merged.cover = { value: cover.coverUrl, source: cover.source };
@@ -84,7 +91,7 @@ export async function lookupMetadata(seed: Seed, current: { meta: Meta; sources:
 
   // Open Library is consulted when Google found nothing OR left series/publisher/edition year empty
   const g = mergeCandidates(candidates);
-  const needsMore = !found.length || !g.series || !g.publisher || !g.year || !g.description;
+  const needsMore = !found.length || !g.series || !g.publisher || !g.year || !g.description || ((g.tags?.value as string[] | undefined)?.length ?? 0) < MIN_TAGS;
   if (needsMore) {
     const best = found[0]?.meta;
     candidates.push(...(await searchOpenLibrary({ title: best?.title ?? s.title, authors: best?.authors ?? s.authors, isbn: best?.isbn ?? isbn, language: s.language })));
@@ -105,18 +112,21 @@ export async function lookupMetadata(seed: Seed, current: { meta: Meta; sources:
     authors: (merged.authors?.value as string[]) ?? current.meta.authors,
     year: merged.year?.value as number | undefined,
     publisher: merged.publisher?.value as string | undefined,
-    tags: [],
+    tags: (merged.tags?.value as string[] | undefined) ?? [],
   };
   const missing = new Set<string>();
   if (!merged.series) missing.add('series');
   if (!merged.description) missing.add('description');
-  if (!merged.tags) missing.add('tags');
+  if (base.tags.length < MIN_TAGS) missing.add('tags');
   if (missing.size) {
     const gen = await generateMissing(base, missing);
     if (gen.series) merged.series = { value: gen.series, source: 'gerado' };
     if (gen.series && gen.seriesIndex != null) merged.seriesIndex = { value: gen.seriesIndex, source: 'gerado' };
     if (gen.description) merged.description = { value: gen.description, source: 'gerado' };
-    if (gen.tags?.length) merged.tags = { value: gen.tags, source: 'gerado' };
+    if (gen.tags?.length) {
+      const all = cleanTags([...base.tags, ...gen.tags]);
+      if (all.length > base.tags.length) merged.tags = { value: all, source: 'gerado' };
+    }
   }
   // say where a value really came from: the OPF, the book's own text, or the file name
   for (const [k, s] of Object.entries(merged)) {
@@ -128,5 +138,12 @@ export async function lookupMetadata(seed: Seed, current: { meta: Meta; sources:
   const warnings: string[] = [];
   const gStatus = providerStatus.google;
   if (gStatus && gStatus !== 'ok') warnings.push(GOOGLE_MESSAGES[gStatus] ?? `Google Books indisponível (${gStatus}).`);
+  const nTags = (merged.tags?.value as string[] | undefined)?.length ?? 0;
+  if (nTags > 0 && nTags < MIN_TAGS)
+    warnings.push(
+      aiAvailable()
+        ? `Só ${nTags} tag${nTags > 1 ? 's' : ''} (o mínimo é ${MIN_TAGS}): a IA não conseguiu completar. Adicione à mão ou tente buscar de novo.`
+        : `Só ${nTags} tag${nTags > 1 ? 's' : ''} encontrada${nTags > 1 ? 's' : ''} (o mínimo é ${MIN_TAGS}). Configure uma chave de IA em Ajustes para completar.`,
+    );
   return { merged, candidates, warnings, generated, empty, foundOnline, ai: aiAvailable() };
 }

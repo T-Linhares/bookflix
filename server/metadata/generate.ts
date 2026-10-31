@@ -120,7 +120,8 @@ export async function generateMissing(meta: Meta, missing: Set<string>): Promise
         `Livro: "${meta.title}"${author ? ` de ${author}` : ''}${meta.year ? ` (${meta.year})` : ''}.\n` +
         `Retorne SOMENTE um JSON com os campos pedidos (${ask.join(', ')}). ` +
         `description: sinopse neutra de 2 a 4 frases, no idioma do título, sem spoilers. ` +
-        `tags: lista de 3 a 6 gêneros/assuntos curtos. ` +
+        `tags: lista de 4 a 6 gêneros/assuntos curtos` +
+        `${meta.tags.length ? `, incluindo as que o livro já tem (${meta.tags.join(', ')}) e acrescentando outras` : ''}. ` +
         `series: {"name": string, "index": number} apenas se tiver certeza de que o livro pertence a uma série; senão omita.`;
       try {
         const text = await askModel(prompt);
