@@ -10,6 +10,7 @@ import Add from './pages/Add';
 import Editor from './pages/Editor';
 import Dashboard from './pages/Dashboard';
 import KindleImport from './pages/KindleImport';
+import Screensavers from './pages/Screensavers';
 import SettingsPage from './pages/SettingsPage';
 
 const links = [
@@ -18,6 +19,7 @@ const links = [
   { to: '/adicionar', label: 'Adicionar' },
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/kindle', label: 'Kindle' },
+  { to: '/protetores', label: 'Protetores' },
   { to: '/ajustes', label: 'Ajustes' },
 ];
 
@@ -119,6 +121,7 @@ export default function App() {
           <Route path="/editor/:id" element={<Editor />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/kindle" element={<KindleImport />} />
+          <Route path="/protetores" element={<Screensavers />} />
           <Route path="/ajustes" element={<SettingsPage />} />
           <Route path="*" element={<div className="p-12 text-center text-muted">Página não encontrada.</div>} />
         </Routes>

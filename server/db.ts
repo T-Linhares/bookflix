@@ -10,7 +10,9 @@ export const WEB_DIST = process.env.BOOKFLIX_WEB_DIST ?? path.join(ROOT, 'web', 
 export const COVERS_DIR = path.join(DATA_DIR, 'covers');
 export const STAGING_DIR = path.join(DATA_DIR, 'staging');
 export const TRASH_DIR = path.join(DATA_DIR, 'trash');
-for (const d of [DATA_DIR, COVERS_DIR, STAGING_DIR, TRASH_DIR]) fs.mkdirSync(d, { recursive: true });
+/** Local copy of the e-reader screensaver pictures, one file per picture named <id>.<ext>. */
+export const SCREENSAVERS_DIR = path.join(DATA_DIR, 'screensavers');
+for (const d of [DATA_DIR, COVERS_DIR, STAGING_DIR, TRASH_DIR, SCREENSAVERS_DIR]) fs.mkdirSync(d, { recursive: true });
 
 export const db = new DatabaseSync(path.join(DATA_DIR, 'library.db'));
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -82,6 +84,14 @@ create table if not exists unmatched(
 create virtual table if not exists books_fts using fts5(
   title, authors, series, publisher, tags, description, notes,
   tokenize = 'unicode61 remove_diacritics 2'
+);
+
+-- e-reader screensavers. id = sha1 of the picture's bytes, so every computer names the same picture the same way.
+-- Only reviewed pictures travel through the sync folder (see sync.ts); deleted ones stay as a mark so other computers delete them too.
+create table if not exists screensavers(
+  id text primary key, ext text not null, name text, tags text not null default '[]', device text, note text,
+  width integer, height integer, size integer, favorite integer not null default 0,
+  reviewed integer not null default 0, deleted integer not null default 0, source text, added_at integer
 );
 
 -- what each synced item looked like the last time it was exchanged, and since when it has been that way (see sync.ts)

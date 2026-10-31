@@ -1,3 +1,4 @@
+import zlib from 'node:zlib';
 import JSZip from 'jszip';
 
 export async function makeEpub(
@@ -42,4 +43,24 @@ ${meta}
   (opts.pages ?? []).forEach((html, i) => zip.file(`OEBPS/p${i}.xhtml`, `<html><body>${html}</body></html>`));
   if (opts.cover) zip.file('OEBPS/cover.png', Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'));
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', mimeType: 'application/epub+zip' });
+}
+
+/** A valid grayscale PNG (8-bit) of `w` x `h`, each pixel derived from `seed` so different seeds give different bytes. */
+export function makePng(w = 6, h = 8, seed = 0): Buffer {
+  const chunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(body) >>> 0);
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 0; // grayscale
+  const raw = Buffer.alloc((w + 1) * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) raw[y * (w + 1) + 1 + x] = (x * 31 + y * 17 + seed * 53) & 255;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 }

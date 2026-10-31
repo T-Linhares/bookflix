@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { db, getSetting, reindexBook, setSetting } from './db.ts';
+import { SCREENSAVERS_DIR, db, getSetting, reindexBook, setSetting } from './db.ts';
 import { getSettings } from './settings.ts';
 import { SyncEngine, SyncError, SyncSummary, syncDirOf } from './sync.ts';
 
@@ -19,7 +19,7 @@ function engine(): SyncEngine {
   const { booksDir } = getSettings();
   if (!booksDir) throw Object.assign(new Error('Escolha a pasta da biblioteca em Ajustes antes de ativar a sincronização.'), { statusCode: 400 });
   if (!fs.existsSync(booksDir)) throw Object.assign(new Error(`Pasta não encontrada: ${booksDir}`), { statusCode: 400 });
-  return new SyncEngine({ db, dir: syncDirOf(booksDir), deviceId: deviceId(), reindex: (id) => reindexBook(id) });
+  return new SyncEngine({ db, dir: syncDirOf(booksDir), deviceId: deviceId(), reindex: (id) => reindexBook(id), screensaverDir: SCREENSAVERS_DIR });
 }
 
 let lastSync: { at: number; summary?: SyncSummary; error?: string } | null = null;

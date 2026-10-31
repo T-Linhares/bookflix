@@ -67,3 +67,13 @@ body {
     @apply rounded-xl border border-line bg-surface p-5;
   }
 }
+
+/* screensavers: a checkerboard shows through transparent PNGs; "e-ink" shows the picture the way a grayscale screen will */
+.checker {
+  background-color: #1b1b24;
+  background-image: conic-gradient(rgba(255, 255, 255, 0.07) 25%, transparent 0 50%, rgba(255, 255, 255, 0.07) 0 75%, transparent 0);
+  background-size: 16px 16px;
+}
+.eink {
+  filter: grayscale(1) contrast(1.12);
+}

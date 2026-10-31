@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { COVERS_DIR, WEB_DIST, clean, db, getBook, parseBook, reindexBook } from './db.ts';
+import { COVERS_DIR, SCREENSAVERS_DIR, WEB_DIST, clean, db, getBook, parseBook, reindexBook } from './db.ts';
 import { SECRET_KEYS, anthropicKey, geminiKey, getSettings, openaiKey, updateSettings } from './settings.ts';
 import { secretsProtected } from './secrets.ts';
 import { testAiKey } from './metadata/generate.ts';
@@ -24,6 +24,7 @@ import { planRemoval, removeFromKindle } from './kindle/remove.ts';
 import { dismissRecommendation, recommendationsFor } from './recommend.ts';
 import { testGoogleKey } from './metadata/providers.ts';
 import { dashboard } from './dashboard.ts';
+import { DEVICES, addImage, getScreensaver, importFolder, kindleFolderInfo, listScreensavers, removeScreensaver, reviewScreensavers, reviewedIds, sendScreensavers, updateScreensaver, type ListQuery } from './screensavers.ts';
 import { now } from './util.ts';
 import { isBookFile } from './util.ts';
 
@@ -72,6 +73,8 @@ export async function buildApp({ token, cloudFolders = detectCloudFolders }: App
 
   await app.register(multipart, { limits: { fileSize: 800 * 1024 * 1024, files: 50 } });
   await app.register(fastifyStatic, { root: COVERS_DIR, prefix: '/covers/', decorateReply: false, maxAge: '1h' });
+  // named by the sha1 of their bytes: a file never changes, so browsers may keep it for good
+  await app.register(fastifyStatic, { root: SCREENSAVERS_DIR, prefix: '/screensavers/', decorateReply: false, maxAge: '30d', immutable: true });
 
   app.setErrorHandler((err: any, _req, reply) => {
     const msg = String(err?.message ?? err);
@@ -344,6 +347,52 @@ export async function buildApp({ token, cloudFolders = detectCloudFolders }: App
     return { ok: true };
   });
 
+  // ---------- screensavers ----------
+  app.get('/api/screensavers', async (req) => {
+    const q = req.query as Record<string, string | undefined>;
+    return listScreensavers({ q: q.q, tag: q.tag, device: q.device, status: q.status as ListQuery['status'], sort: q.sort as ListQuery['sort'], page: num(q.page) || 1, per: num(q.per) || 24 });
+  });
+  app.get('/api/screensavers/devices', async () => DEVICES);
+  app.get('/api/screensavers/kindle', async (req) => kindleFolderInfo(String((req.query as any)?.path ?? '') || undefined));
+  app.post('/api/screensavers/upload', async (req) => {
+    const out = { added: 0, duplicates: 0, skipped: 0, items: [] as ReturnType<typeof getScreensaver>[] };
+    for await (const part of req.parts()) {
+      if (part.type !== 'file') continue;
+      try {
+        const { item, created } = addImage(await part.toBuffer(), { name: part.filename, source: 'upload' });
+        created ? out.added++ : out.duplicates++;
+        if (created) out.items.push(item);
+      } catch (e: any) {
+        if (e?.statusCode !== 400) throw e;
+        out.skipped++;
+      }
+    }
+    return out;
+  });
+  app.post('/api/screensavers/import-folder', async (req) => {
+    let dir = String((req.body as any)?.path ?? '');
+    if (!dir) {
+      const info = await kindleFolderInfo();
+      if (!info.root) throw Object.assign(new Error('Kindle não encontrado. Conecte-o por USB ou informe a pasta.'), { statusCode: 400 });
+      if (!info.exists || !info.dir) throw Object.assign(new Error('Este Kindle ainda não tem a pasta koreader/screensavers.'), { statusCode: 400 });
+      dir = info.dir;
+    }
+    return importFolder(dir);
+  });
+  app.post('/api/screensavers/send', async (req) => {
+    const body = (req.body ?? {}) as { ids?: string[]; all?: boolean; path?: string };
+    const ids = body.all ? reviewedIds() : (body.ids ?? []).map(String);
+    if (!ids.length) throw Object.assign(new Error('Nenhuma imagem para enviar.'), { statusCode: 400 });
+    return sendScreensavers(ids, body.path || undefined);
+  });
+  app.post('/api/screensavers/review', async (req) => {
+    const body = (req.body ?? {}) as { ids?: string[]; patch?: Record<string, unknown> };
+    return { reviewed: reviewScreensavers((body.ids ?? []).map(String), (body.patch ?? {}) as any) };
+  });
+  app.get('/api/screensavers/:id', async (req) => getScreensaver(String((req.params as any).id)) ?? Promise.reject(Object.assign(new Error('Imagem não encontrada.'), { statusCode: 404 })));
+  app.patch('/api/screensavers/:id', async (req) => updateScreensaver(String((req.params as any).id), (req.body ?? {}) as any));
+  app.delete('/api/screensavers/:id', async (req) => ({ ok: removeScreensaver(String((req.params as any).id)) }));
+
   app.get('/api/dashboard', async (req) => dashboard(num((req.query as any).year) || undefined));
 
   // ---------- built web app (production) ----------
@@ -352,7 +401,7 @@ export async function buildApp({ token, cloudFolders = detectCloudFolders }: App
     await app.register(fastifyStatic, { root: dist, prefix: '/', decorateReply: true });
     app.setNotFoundHandler((req, reply) => {
       // a missing cover must not come back as the app's HTML with a 200
-      if (req.url.startsWith('/api/') || req.url.startsWith('/covers/')) return reply.code(404).send({ error: 'Rota não encontrada' });
+      if (req.url.startsWith('/api/') || req.url.startsWith('/covers/') || req.url.startsWith('/screensavers/')) return reply.code(404).send({ error: 'Rota não encontrada' });
       return reply.sendFile('index.html');
     });
   }

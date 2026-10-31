@@ -8,6 +8,7 @@ import path from 'node:path';
  *
  *   <booksDir>/.bookflix-sync/library.json          the library's unique ID
  *   <booksDir>/.bookflix-sync/devices/<id>.json     one file per device, written only by that device
+ *   <booksDir>/.bookflix-sync/screensavers/<id>.<ext>  the screensaver pictures themselves, named by the sha1 of their bytes
  *
  * The live SQLite database never goes in the shared folder (cloud clients corrupt WAL files). Each device writes a
  * snapshot of the things the user created (progress, ratings, notes, highlights, reading days, wishlist, a few settings)
@@ -38,6 +39,8 @@ const META = ['title', 'subtitle', 'authors', 'series', 'series_index', 'publish
 const STATE = ['status', 'progress', 'rating', 'review', 'last_read', 'finished_at', 'read_time', 'sent_to_kindle'];
 const HL = ['kind', 'text', 'note', 'chapter', 'page', 'color', 'created_at', 'source', 'edited', 'deleted'];
 const SHARED = ['nameTemplate', 'useFolders', 'yearlyGoal'];
+// screensavers: the data about a picture; its bytes go to <sync folder>/screensavers/<id>.<ext>
+const SS = ['ext', 'name', 'tags', 'device', 'note', 'favorite', 'deleted', 'width', 'height', 'size', 'added_at'];
 
 type Fields = Record<string, unknown>;
 interface BookEntry {
@@ -59,6 +62,10 @@ interface DayRow {
   seconds: number;
   pages: number;
 }
+interface SsEntry {
+  u: number;
+  f: Fields;
+}
 interface DeviceFile {
   v: number;
   libraryId: string;
@@ -72,6 +79,8 @@ interface DeviceFile {
   dismissed: Fields[];
   filters: Fields[];
   settings: { u: number; f: Fields };
+  /** reviewed screensavers only (older files do not have this) */
+  screensavers?: Record<string, SsEntry>;
 }
 
 export interface SyncSummary {
@@ -100,13 +109,16 @@ export class SyncEngine {
   private deviceId: string;
   private now: () => number;
   private reindex: (bookId: number) => void;
+  /** this computer's folder of screensaver pictures; without it the pictures are not synced */
+  private ssDir?: string;
 
-  constructor(o: { db: DatabaseSync; dir: string; deviceId: string; now?: () => number; reindex?: (bookId: number) => void }) {
+  constructor(o: { db: DatabaseSync; dir: string; deviceId: string; now?: () => number; reindex?: (bookId: number) => void; screensaverDir?: string }) {
     this.db = o.db;
     this.dir = o.dir;
     this.deviceId = o.deviceId;
     this.now = o.now ?? Date.now;
     this.reindex = o.reindex ?? (() => {});
+    this.ssDir = o.screensaverDir;
   }
 
   // ---------- library identity ----------
@@ -226,6 +238,7 @@ export class SyncEngine {
       dismissed: this.db.prepare('select norm, title, at from rec_dismissed order by norm').all() as Fields[],
       filters: this.db.prepare('select name, query from saved_filters order by name, query').all() as Fields[],
       settings: { u: 0, f: {} },
+      screensavers: {},
     };
     const byId = new Map<number, Record<string, any>>();
     for (const b of this.localBooks()) {
@@ -248,6 +261,10 @@ export class SyncEngine {
     }
     const sf = this.sharedSettings();
     file.settings = { u: this.touch('settings', sf), f: sf };
+    for (const r of this.db.prepare('select * from screensavers where reviewed = 1').all() as Record<string, any>[]) {
+      const f = this.pick(r, SS);
+      file.screensavers![r.id] = { u: this.touch(`s:${r.id}`, f), f };
+    }
     return file;
   }
 
@@ -311,7 +328,7 @@ export class SyncEngine {
     return r.dev < this.deviceId;
   }
 
-  private setColumns(table: string, idCol: string, id: number, cols: string[], f: Fields) {
+  private setColumns(table: string, idCol: string, id: number | string, cols: string[], f: Fields) {
     const present = cols.filter((c) => c in f);
     if (!present.length) return;
     const params: Record<string, any> = { __id: id };
@@ -422,6 +439,75 @@ export class SyncEngine {
     }
   }
 
+  // ---------- screensavers ----------
+
+  private sharedImage = (id: string, ext: string) => path.join(this.dir, 'screensavers', `${id}.${ext}`);
+
+  /** The bytes of a picture from the shared folder, only when they really are that picture (a half-downloaded file hashes differently). */
+  private readShared(id: string, ext: string): Buffer | null {
+    try {
+      const b = fs.readFileSync(this.sharedImage(id, ext));
+      return b.length && crypto.createHash('sha1').update(b).digest('hex') === id ? b : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private mergeScreensavers(remotes: DeviceFile[], summary: SyncSummary) {
+    if (!this.ssDir) return;
+    const local = (id: string, ext: string) => path.join(this.ssDir!, `${id}.${ext}`);
+    for (const file of remotes) {
+      for (const [id, e] of Object.entries(file.screensavers ?? {})) {
+        const ext = String(e.f.ext ?? '');
+        if (!/^[0-9a-f]{40}$/.test(id) || !/^[a-z0-9]{2,4}$/.test(ext)) continue;
+        const row = this.db.prepare('select * from screensavers where id = ?').get(id) as Record<string, any> | undefined;
+        // a picture that should exist here but has no file yet needs its bytes first; if the cloud has not finished, wait
+        const needsFile = !e.f.deleted && (!row || !!row.deleted || !fs.existsSync(local(id, ext)));
+        const bytes = needsFile ? this.readShared(id, ext) : null;
+        if (needsFile && !bytes) {
+          summary.pending++;
+          continue;
+        }
+        if (!row) {
+          if (bytes) (fs.mkdirSync(this.ssDir, { recursive: true }), fs.writeFileSync(local(id, ext), bytes));
+          this.db.prepare('insert into screensavers(id, ext, reviewed, source) values(?,?,1,?)').run(id, ext, 'sync');
+          this.setColumns('screensavers', 'id', id, SS, e.f);
+          summary.applied++;
+        } else {
+          const localF = this.pick(row, SS);
+          const mine = { u: this.touch(`s:${id}`, localF), f: localF };
+          // a copy still waiting for review here always yields to a reviewed one
+          if (row.reviewed && !this.remoteWins({ u: e.u, f: e.f, dev: file.deviceId }, mine, never)) continue;
+          if (bytes) (fs.mkdirSync(this.ssDir, { recursive: true }), fs.writeFileSync(local(id, ext), bytes));
+          this.setColumns('screensavers', 'id', id, SS, e.f);
+          this.db.prepare('update screensavers set reviewed = 1 where id = ?').run(id);
+          summary.applied++;
+        }
+        if (e.f.deleted) fs.rmSync(local(id, ext), { force: true });
+        this.remember(`s:${id}`, this.pick(this.db.prepare('select * from screensavers where id = ?').get(id) as Record<string, any>, SS), e.u);
+      }
+    }
+  }
+
+  /** Puts this computer's reviewed pictures in the shared folder (once) and takes deleted ones out of it. */
+  private publishScreensavers() {
+    if (!this.ssDir) return;
+    for (const r of this.db.prepare('select id, ext, deleted from screensavers where reviewed = 1').all() as { id: string; ext: string; deleted: number }[]) {
+      const shared = this.sharedImage(r.id, r.ext);
+      if (r.deleted) {
+        fs.rmSync(shared, { force: true });
+        continue;
+      }
+      if (this.readShared(r.id, r.ext)) continue;
+      const src = path.join(this.ssDir, `${r.id}.${r.ext}`);
+      if (!fs.existsSync(src)) continue;
+      fs.mkdirSync(path.dirname(shared), { recursive: true });
+      const tmp = path.join(path.dirname(shared), `.${r.id}.tmp`);
+      fs.copyFileSync(src, tmp);
+      fs.renameSync(tmp, shared);
+    }
+  }
+
   // ---------- the whole round ----------
 
   sync(): SyncSummary {
@@ -443,12 +529,14 @@ export class SyncEngine {
       this.mergeBooks(remotes, summary);
       this.mergeHighlights(remotes, summary);
       this.mergeRest(remotes, summary);
+      this.mergeScreensavers(remotes, summary);
       this.db.exec('COMMIT');
     } catch (e) {
       this.db.exec('ROLLBACK');
       throw e;
     }
 
+    this.publishScreensavers();
     const file = this.build();
     const body = JSON.stringify(file);
     const digest = sha(body);
